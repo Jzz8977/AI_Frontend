@@ -14,6 +14,9 @@ interface TopBarProps {
   stage: Stage;
   usage: Usage | null;
   email?: string;
+  /** True when the history routes are active (drives the [ 历史 ] highlight). */
+  historyActive?: boolean;
+  onHome: () => void;
   onHistory: () => void;
   onSettings: () => void;
   onLogout: () => void;
@@ -24,6 +27,8 @@ export function TopBar({
   stage,
   usage,
   email,
+  historyActive = false,
+  onHome,
   onHistory,
   onSettings,
   onLogout,
@@ -33,15 +38,17 @@ export function TopBar({
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-bg/95 backdrop-blur">
       <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-6 px-8 py-[14px]">
-        {/* logo */}
-        <div className="flex items-center gap-2.5">
+        {/* logo — 点击回首页 */}
+        <button
+          onClick={onHome}
+          aria-label="回到首页"
+          className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
+        >
           <Dot color="green" pulse size={9} />
           <span className="font-mono text-sm tracking-tight text-text">
-            resume<span className="text-text-muted">.</span>
-            <span className="text-green">rewrite</span>
-            <span className="text-text-muted">()</span>
+            前端<span className="text-green">方向部</span>
           </span>
-        </div>
+        </button>
 
         {/* steps */}
         <nav className="hidden items-center gap-1 md:flex" aria-label="进度">
@@ -100,9 +107,7 @@ export function TopBar({
             onClick={onHistory}
             className={cn(
               "font-mono text-[11px] uppercase tracking-[1.5px] transition-colors hover:text-text",
-              stage === "history" || stage === "project"
-                ? "text-green"
-                : "text-text-dim"
+              historyActive ? "text-green" : "text-text-dim"
             )}
           >
             [ 历史 ]

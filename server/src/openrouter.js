@@ -3,7 +3,9 @@
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.5';
-const MAX_TOKENS = 4000;
+// auto-mode results (full rewritten_experience) routinely exceed 4k tokens;
+// too low here truncates the JSON and parsing fails downstream.
+const MAX_TOKENS = Number.parseInt(process.env.MAX_TOKENS ?? '', 10) || 8000;
 const TIMEOUT_MS = 90_000;
 
 // Friendly id (sent by the client) -> OpenRouter model slug.
@@ -31,10 +33,14 @@ export function resolveModel(id) {
  * @param {object} [opts]
  * @param {string} [opts.apiKey] - the user's own key; falls back to platform key
  * @param {string} [opts.model] - resolved OpenRouter slug; falls back to env/default
+ * @param {string} [opts.system] - optional system message prepended to messages
  * @returns {Promise<string>} the raw assistant message content
  * @throws {Error} on missing key, non-2xx response, or network/timeout error
  */
-export async function callOpenRouter(prompt, { apiKey, model: modelOverride } = {}) {
+export async function callOpenRouter(
+  prompt,
+  { apiKey, model: modelOverride, system } = {}
+) {
   const key = apiKey || process.env.OPENROUTER_API_KEY;
   if (!key) {
     const err = new Error(
@@ -63,7 +69,12 @@ export async function callOpenRouter(prompt, { apiKey, model: modelOverride } = 
       },
       body: JSON.stringify({
         model,
-        messages: [{ role: 'user', content: prompt }],
+        messages: system
+          ? [
+              { role: 'system', content: system },
+              { role: 'user', content: prompt },
+            ]
+          : [{ role: 'user', content: prompt }],
         response_format: { type: 'json_object' },
         max_tokens: MAX_TOKENS,
         temperature: 0.7,
@@ -111,7 +122,24 @@ export async function callOpenRouter(prompt, { apiKey, model: modelOverride } = 
     throw err;
   }
 
-  const content = data?.choices?.[0]?.message?.content;
+  const choice = data?.choices?.[0];
+  const content = choice?.message?.content;
+  const finishReason = choice?.finish_reason;
+
+  // Diagnostic: finish_reason === 'length' means the model was cut off by
+  // max_tokens — the JSON will be truncated and parse will fail downstream.
+  console.log(
+    `[openrouter] model=${model} finish_reason=${finishReason} ` +
+      `content_len=${typeof content === 'string' ? content.length : 'n/a'} ` +
+      `usage=${JSON.stringify(data?.usage ?? {})}`
+  );
+  if (finishReason === 'length') {
+    console.warn(
+      `[openrouter] ⚠ response TRUNCATED by max_tokens (${MAX_TOKENS}). ` +
+        `Raise MAX_TOKENS or shorten the input.`
+    );
+  }
+
   if (typeof content !== 'string' || content.trim() === '') {
     const err = new Error('OpenRouter response contained no message content');
     err.code = 'EMPTY';
@@ -120,6 +148,101 @@ export async function callOpenRouter(prompt, { apiKey, model: modelOverride } = 
   }
 
   return content;
+}
+
+/**
+ * Stream an OpenRouter completion. Async generator yielding text deltas.
+ * No response_format (NDJSON protocol is enforced via the prompt).
+ *
+ * @param {string} prompt
+ * @param {object} [opts]
+ * @param {string} [opts.apiKey]
+ * @param {string} [opts.model]
+ * @param {string} [opts.system]
+ * @param {AbortSignal} [opts.signal] - aborts the upstream fetch
+ * @yields {string} incremental assistant text
+ * @throws {Error} with .code (NO_KEY | UPSTREAM | NETWORK)
+ */
+export async function* streamOpenRouter(
+  prompt,
+  { apiKey, model: modelOverride, system, signal } = {}
+) {
+  const key = apiKey || process.env.OPENROUTER_API_KEY;
+  if (!key) {
+    const err = new Error('No OpenRouter API key available.');
+    err.code = 'NO_KEY';
+    throw err;
+  }
+  const model = modelOverride || process.env.OPENROUTER_MODEL || DEFAULT_MODEL;
+
+  let response;
+  try {
+    response = await fetch(ENDPOINT, {
+      method: 'POST',
+      signal,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${key}`,
+        'HTTP-Referer': 'http://localhost:3001',
+        'X-Title': 'Resume Rewriter Portal',
+      },
+      body: JSON.stringify({
+        model,
+        messages: system
+          ? [
+              { role: 'system', content: system },
+              { role: 'user', content: prompt },
+            ]
+          : [{ role: 'user', content: prompt }],
+        max_tokens: MAX_TOKENS,
+        temperature: 0.7,
+        stream: true,
+      }),
+    });
+  } catch (e) {
+    const err = new Error(
+      e.name === 'AbortError'
+        ? 'OpenRouter stream aborted'
+        : `Network error contacting OpenRouter: ${e.message}`
+    );
+    err.code = 'NETWORK';
+    throw err;
+  }
+
+  if (!response.ok || !response.body) {
+    let detail = '';
+    try {
+      detail = JSON.stringify(await response.json());
+    } catch {
+      detail = await response.text().catch(() => '');
+    }
+    const err = new Error(`OpenRouter returned ${response.status}`);
+    err.code = 'UPSTREAM';
+    err.status = response.status;
+    err.raw = detail || undefined;
+    throw err;
+  }
+
+  // Parse the OpenAI-style SSE: lines "data: {json}" / "data: [DONE]".
+  const decoder = new TextDecoder();
+  let buf = '';
+  for await (const chunk of response.body) {
+    buf += decoder.decode(chunk, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (!line.startsWith('data:')) continue;
+      const payload = line.slice(5).trim();
+      if (payload === '[DONE]') return;
+      try {
+        const delta = JSON.parse(payload)?.choices?.[0]?.delta?.content;
+        if (delta) yield delta;
+      } catch {
+        // ignore keep-alive / non-JSON lines
+      }
+    }
+  }
 }
 
 export default callOpenRouter;

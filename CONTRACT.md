@@ -38,8 +38,10 @@
 | 方法 | 路径 | Body | 返回 |
 |---|---|---|---|
 | POST | `/api/rewrite` | `{mode, role, original, model?, projectId?, projectTitle?}` (Bearer) | `{ result, usage, projectId, projectTitle, runId?, version? }` |
+| POST | `/api/rewrite/stream` | `{role, original, model?, projectId?, projectTitle?}` (Bearer) | **SSE 流**(见下「流式」) |
 
-- `mode`: `"auto"`(快速重写) \| `"review"`(精修诊断)。
+- **`auto` 模式走流式 `/api/rewrite/stream`;`review` 模式走非流式 `/api/rewrite`。** 两者校验/限流/落库规则一致。
+- `mode`: `"auto"`(快速重写,流式) \| `"review"`(精修诊断,非流式)。
 - `role`: `"frontend"` \| `"fullstack"` \| `"ai"`。
 - `original`: string,服务端校验 `trim().length` 在 `[50, 8000]`,否则 400。
 - `model`(可选): `"claude"` \| `"chatgpt"` \| `"qwen"` \| `"deepseek"`。省略则用服务端默认
@@ -47,10 +49,23 @@
 - 服务端按 `mode`/`role` 构造 prompt(逻辑见 r1.md 第 5 节),调 OpenRouter
   `POST https://openrouter.ai/api/v1/chat/completions`,model 取 env(用户自带 key 时仍用同 model),
   `response_format` 尽量要求 JSON,响应走容错解析(剥离 ```json 包裹、截取首尾大括号)。
-- `result` 的 JSON schema 严格按 r1.md 5.4 节:
-  - `auto`: `{summary, highlights[], skills:{core[],ai[],extra[]}, rewritten_experience, diff_notes:[{type,from,to,why}]}`
+- `result` 的 JSON schema:
+  - `auto`(流式落库后形态): `{ summary:string, segments:[{kind:"skills"|"experience"|"project", title, original, rewritten, note}] }`
   - `review`: `{score, verdict, issues:[{id,severity,category,original,problem,suggestion,rewritten}]}`
-- AI/解析失败:返回 `502 { error, raw? }`(raw 为模型原始输出,供前端折叠展示),**不计数**。
+- AI/解析失败:`review` 返回 `502 { error, raw? }`;`auto` 通过 SSE `error` 事件返回。**均不计数**。
+
+### 流式 (`POST /api/rewrite/stream`,SSE,auto 专用)
+
+- 校验/鉴权失败仍以**普通 JSON** 返回(400/401/404/429),不进入 SSE;成功后切换
+  `Content-Type: text/event-stream`,逐帧 `data: <json>\n\n`,事件类型 `t`:
+  - `{"t":"meta","summary":string}` — 首帧,自我评价。
+  - `{"t":"seg","kind":"skills"|"experience"|"project","title","original","rewritten","note"}` —
+    每段一帧:技能 1 帧、每家公司 1 帧、**每个项目各 1 帧**。前端收一帧渲一张左右对比卡。
+  - `{"t":"end","usage",...,"projectId","projectTitle","runId","version"}` — 成功收尾,**此时才计数+落库**。
+  - `{"t":"error","error",...}` — 失败收尾,不计数/不落库。
+- 模型按上述 NDJSON 协议逐行输出(prompt 强约束);后端用 brace 感知的提取器容错切分
+  (容忍跨 chunk、pretty-print)。客户端断开会 abort 上游,不计数。
+- 模型走向:`deepseek`→DeepSeek 直连流;其余→OpenRouter 流。流式路径**不发** `response_format`。
 - `projectId`(可选,整数):传入则把本次改写作为**新版本**追加到该项目(必须属于当前用户,否则 404,
   且在调用 AI 前校验);省略则**新建项目**。`projectTitle`(可选,≤80 字符,仅新建项目时生效)
   留空则自动按 `岗位 · 时间` 生成。仅**成功改写**才落库(与计数一致);落库失败不影响返回结果。
@@ -67,10 +82,20 @@
 
 - 全部按 `user_id` 归属校验:非本人项目一律 `404`。`runs` 按时间升序,`version` 为项目内 1 起序号。
 
-## 前端阶段机
+## 前端路由 + 阶段机
 
-`auth(登录/注册) → mode → role → input → loading → result(auto: 3 Tab / review: issue 列表)`
-另有 `history` 视图(TopBar「历史」进入):项目列表 → 某项目的版本列表 → 点版本只读复用 result 页。
+react-router,**每一步独立路由**(未登录任意路径显示 auth):
+- `/` → 重定向 `/mode`。`/mode` `/role` `/input` `/result` 各为一步;返回按钮也走路由(`navigate("/mode|/role")`)。
+- `/result` 守卫:无流式/结果/历史上下文(如刷新冷启)时重定向 `/input`。review 等待响应时该路由内显示 loading 动画。
+- `/history` — 项目列表。`/history/:projectId` — 该项目版本列表(点版本 → 设状态并 `navigate("/result")` 只读复用)。
+- 其它路径重定向 `/mode`。TopBar 左上角 `前端方向部` 点击回 `/mode`;「历史」→ `/history`,据 `location` 高亮;步骤指示由 `location.pathname` 推导。
+- `auto` 结果页有「分段对比 / 整理成稿」切换:**整理成稿**把 summary + 各段 `rewritten` 拼成一篇分组(技能/工作经历/项目)Markdown,带「复制全文」按钮(`navigator.clipboard`),流式期间同步增量。
+
+`auth(登录/注册) → mode → role → input → result`
+- `auto`:点 EXECUTE 直接进 `result`,流式逐段渲染**左右对比卡**(summary + 技能/每家公司/每个项目各一张),
+  顶部 `streaming…` 指示;流结束后才出现「再改一版/改写新简历」动作按钮。
+- `review`:走 `loading` 动画 → `result` 的 issue 列表(非流式,沿用原 ReviewResult)。
+- 另有 `history` 视图(TopBar「历史」进入):项目列表 → 某项目的版本列表 → 点版本只读复用 result 页。
 
 - 未登录只能见 auth 页;登录后进入主流程,顶部 TopBar 显示当前 step + 剩余次数 + 退出。
 - EXECUTE 按钮防抖:请求中禁用 + 客户端 1.2s 节流,防重复点击。

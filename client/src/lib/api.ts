@@ -156,6 +156,133 @@ export function rewrite(
   });
 }
 
+// ---- Streaming rewrite (auto only, NDJSON over SSE) ----
+export interface StreamHandlers {
+  onMeta: (summary: string) => void;
+  onSegment: (seg: import("./types").AutoSegment) => void;
+  onEnd: (info: {
+    usage?: import("./types").Usage;
+    projectId: number | null;
+    projectTitle: string | null;
+    runId?: number;
+    version?: number;
+  }) => void;
+  onError: (err: ApiError) => void;
+}
+
+/**
+ * POST /api/rewrite/stream and dispatch SSE events. Returns an abort fn.
+ * 4xx (non-SSE) is surfaced via onError, same shape as api().
+ */
+export function streamRewrite(
+  params: {
+    role: RoleId;
+    original: string;
+    model: ModelId;
+    projectId?: number | null;
+    projectTitle?: string | null;
+  },
+  h: StreamHandlers
+): () => void {
+  const ctrl = new AbortController();
+  const token = getToken();
+
+  (async () => {
+    let res: Response;
+    try {
+      res = await fetch("/api/rewrite/stream", {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          role: params.role,
+          original: params.original,
+          model: params.model,
+          ...(params.projectId != null
+            ? { projectId: params.projectId }
+            : {}),
+          ...(params.projectTitle ? { projectTitle: params.projectTitle } : {}),
+        }),
+      });
+    } catch {
+      h.onError({ status: 0, message: "网络错误,无法连接到服务器。" });
+      return;
+    }
+
+    // Validation / auth failures come back as plain JSON, not SSE.
+    if (!res.ok || !res.body) {
+      const d = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (res.status === 401) {
+        clearToken();
+        onUnauthorized?.();
+      }
+      h.onError({
+        status: res.status,
+        message: (d.error as string) || `请求失败 (${res.status})`,
+        usage: d.usage as ApiError["usage"],
+      });
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let sep: number;
+        // SSE frames are separated by a blank line.
+        while ((sep = buf.indexOf("\n\n")) >= 0) {
+          const frame = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const line = frame.split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          let evt: Record<string, unknown>;
+          try {
+            evt = JSON.parse(line.slice(5).trim());
+          } catch {
+            continue;
+          }
+          if (evt.t === "meta") h.onMeta((evt.summary as string) ?? "");
+          else if (evt.t === "seg")
+            h.onSegment({
+              kind: (evt.kind as import("./types").SegmentKind) ?? "experience",
+              title: (evt.title as string) ?? "",
+              original: (evt.original as string) ?? "",
+              rewritten: (evt.rewritten as string) ?? "",
+              note: (evt.note as string) ?? "",
+            });
+          else if (evt.t === "end")
+            h.onEnd({
+              usage: evt.usage as import("./types").Usage | undefined,
+              projectId: (evt.projectId as number | null) ?? null,
+              projectTitle: (evt.projectTitle as string | null) ?? null,
+              runId: evt.runId as number | undefined,
+              version: evt.version as number | undefined,
+            });
+          else if (evt.t === "error")
+            h.onError({
+              status: 502,
+              message: (evt.error as string) || "AI 流式请求失败",
+              raw: evt.raw as string | undefined,
+              usage: evt.usage as ApiError["usage"],
+            });
+        }
+      }
+    } catch {
+      if (!ctrl.signal.aborted)
+        h.onError({ status: 0, message: "流式连接中断,请重试。" });
+    }
+  })();
+
+  return () => ctrl.abort();
+}
+
 // ---- Projects / history ----
 export function listProjects() {
   return api<{ projects: ProjectSummary[] }>("/api/projects");

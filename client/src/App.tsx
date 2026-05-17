@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import { TopBar } from "@/components/ui/top-bar";
@@ -19,11 +21,13 @@ import {
   getToken,
   me,
   rewrite,
+  streamRewrite,
   setUnauthorizedHandler,
 } from "@/lib/api";
 import type {
   ApiError,
   AutoResult as AutoResultData,
+  AutoSegment,
   Mode,
   ModelId,
   ProjectDetail,
@@ -38,12 +42,14 @@ import type {
 import { DEFAULT_MODEL } from "@/lib/constants";
 
 export default function App() {
+  const navigate = useNavigate();
+  const location = useLocation();
+
   const [booting, setBooting] = useState(true);
   const [authed, setAuthed] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
 
-  const [stage, setStage] = useState<Stage>("mode");
   const [mode, setMode] = useState<Mode>("auto");
   const [role, setRole] = useState<RoleId>("frontend");
   const [model] = useState<ModelId>(DEFAULT_MODEL);
@@ -60,7 +66,19 @@ export default function App() {
   // When set, the result screen is showing a past run (read-only history view).
   const [viewingRun, setViewingRun] = useState<Run | null>(null);
 
+  // auto-mode streaming state (NDJSON segments arriving live).
+  const [streaming, setStreaming] = useState(false);
+  const [streamSummary, setStreamSummary] = useState("");
+  const [streamSegments, setStreamSegments] = useState<AutoSegment[]>([]);
+
   const lastSubmit = useRef(0);
+  const abortStream = useRef<(() => void) | null>(null);
+
+  const stopStream = useCallback(() => {
+    abortStream.current?.();
+    abortStream.current = null;
+    setStreaming(false);
+  }, []);
 
   const resetProject = useCallback(() => {
     setProjectId(null);
@@ -69,7 +87,13 @@ export default function App() {
     setViewingRun(null);
   }, []);
 
+  const clearStream = useCallback(() => {
+    setStreamSummary("");
+    setStreamSegments([]);
+  }, []);
+
   const logout = useCallback(() => {
+    stopStream();
     clearToken();
     setAuthed(false);
     setUser(null);
@@ -78,8 +102,9 @@ export default function App() {
     setResult(null);
     setError(null);
     setOriginal("");
+    clearStream();
     resetProject();
-  }, [resetProject]);
+  }, [resetProject, stopStream, clearStream]);
 
   // Any 401 anywhere → clear token, return to auth.
   useEffect(() => {
@@ -114,11 +139,17 @@ export default function App() {
   const onAuthed = useCallback(async () => {
     try {
       await loadMe();
-      setStage("mode");
+      navigate("/mode");
     } catch (e) {
       toast.error((e as ApiError).message || "加载用户信息失败");
     }
-  }, [loadMe]);
+  }, [loadMe, navigate]);
+
+  // logo「前端方向部」→ 回到创建流程第一步
+  const goHome = useCallback(() => {
+    setError(null);
+    navigate("/mode");
+  }, [navigate]);
 
   const runRewrite = useCallback(async () => {
     const now = Date.now();
@@ -127,7 +158,7 @@ export default function App() {
 
     setInFlight(true);
     setError(null);
-    setStage("loading");
+    navigate("/result");
     const startedAt = Date.now();
     try {
       const res = await rewrite(mode, role, original, model, {
@@ -145,43 +176,104 @@ export default function App() {
       setProjectId(res.projectId);
       setProjectTitle(res.projectTitle);
       setViewingRun(null);
-      setStage("result");
     } catch (e) {
       const err = e as ApiError;
       if (err.status === 401) {
-        // api() already cleared auth; reset the stage so we don't leave a
-        // stale "loading" screen behind the AuthStep gate.
-        setStage("input");
+        // api() already cleared auth; AuthStep gate will take over.
+        navigate("/input");
         return;
       }
       if (err.status === 429 && err.usage) setUsage(err.usage);
       setError(err);
-      setStage("input");
+      navigate("/input");
       toast.error(err.message);
     } finally {
       setInFlight(false);
     }
-  }, [mode, role, original, model, projectId, projectName]);
+  }, [mode, role, original, model, projectId, projectName, navigate]);
+
+  // auto mode → streaming NDJSON. Render the result page immediately and
+  // append segment cards as they arrive.
+  const runStream = useCallback(() => {
+    const now = Date.now();
+    if (now - lastSubmit.current < 1200) return;
+    lastSubmit.current = now;
+
+    stopStream();
+    setError(null);
+    setResult(null);
+    setViewingRun(null);
+    setStreamSummary("");
+    setStreamSegments([]);
+    setStreaming(true);
+    setInFlight(true);
+    navigate("/result");
+
+    abortStream.current = streamRewrite(
+      {
+        role,
+        original,
+        model,
+        projectId,
+        projectTitle: projectId == null ? projectName : null,
+      },
+      {
+        onMeta: (summary) => setStreamSummary(summary),
+        onSegment: (seg) => setStreamSegments((p) => [...p, seg]),
+        onEnd: (info) => {
+          if (info.usage) setUsage(info.usage);
+          setProjectId(info.projectId);
+          setProjectTitle(info.projectTitle);
+          setStreaming(false);
+          setInFlight(false);
+          abortStream.current = null;
+        },
+        onError: (err) => {
+          setStreaming(false);
+          setInFlight(false);
+          abortStream.current = null;
+          if (err.status === 401) {
+            navigate("/input");
+            return;
+          }
+          if (err.status === 429 && err.usage) setUsage(err.usage);
+          setError(err);
+          navigate("/input");
+          toast.error(err.message);
+        },
+      }
+    );
+  }, [role, original, model, projectId, projectName, stopStream, navigate]);
+
+  // Single entry point used by InputStep / retry.
+  const onExecute = useCallback(() => {
+    if (mode === "auto") runStream();
+    else runRewrite();
+  }, [mode, runStream, runRewrite]);
 
   // "改写新简历(新建项目)" — drop project context, back to start.
   const newProject = useCallback(() => {
+    stopStream();
+    clearStream();
     setResult(null);
     setError(null);
     setOriginal("");
     resetProject();
-    setStage("mode");
-  }, [resetProject]);
+    navigate("/mode");
+  }, [resetProject, stopStream, clearStream, navigate]);
 
   // "再改一版(留在本项目)" — keep project, return to input to tweak & resubmit.
   const iterateProject = useCallback(
     (seedOriginal?: string) => {
+      stopStream();
+      clearStream();
       setResult(null);
       setError(null);
       setViewingRun(null);
       if (seedOriginal != null) setOriginal(seedOriginal);
-      setStage("input");
+      navigate("/input");
     },
-    []
+    [stopStream, clearStream, navigate]
   );
 
   // Open a past run from history (read-only on the result screen).
@@ -191,6 +283,8 @@ export default function App() {
         toast.error("该版本没有可展示的结果");
         return;
       }
+      stopStream();
+      clearStream();
       setResult(run.result);
       setMode(run.mode);
       setRole(run.role);
@@ -198,9 +292,25 @@ export default function App() {
       setProjectId(project.id);
       setProjectTitle(project.title);
       setViewingRun(run);
-      setStage("result");
+      navigate("/result");
     },
-    []
+    [stopStream, clearStream, navigate]
+  );
+
+  // ProjectsView「再改一版」— set project context then go to input under "/".
+  const continueProject = useCallback(
+    (pid: number, title: string, seed: string) => {
+      setProjectId(pid);
+      setProjectTitle(title);
+      setViewingRun(null);
+      stopStream();
+      clearStream();
+      setResult(null);
+      setError(null);
+      setOriginal(seed);
+      navigate("/input");
+    },
+    [stopStream, clearStream, navigate]
   );
 
   if (booting) {
@@ -220,7 +330,11 @@ export default function App() {
   // Result-screen action buttons differ for a fresh rewrite vs. history view.
   const resultActions = viewingRun ? (
     <>
-      <Button variant="outline" size="sm" onClick={() => setStage("history")}>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => navigate("/history")}
+      >
         ← 返回历史
       </Button>
       {projectId != null && projectTitle != null && (
@@ -249,97 +363,136 @@ export default function App() {
       ? "改写完成"
       : "诊断完成";
 
+  // Each flow step is its own route; back buttons navigate routes too.
+  const modeStep = (
+    <ModeStep
+      onSelect={(m) => {
+        setMode(m);
+        navigate("/role");
+      }}
+    />
+  );
+
+  const roleStep = (
+    <RoleStep
+      mode={mode}
+      onSelect={(r) => {
+        setRole(r);
+        navigate("/input");
+      }}
+      onBack={() => navigate("/mode")}
+    />
+  );
+
+  const inputStep = error ? (
+    <ErrorPanel
+      error={error}
+      onRetry={onExecute}
+      onBack={() => setError(null)}
+    />
+  ) : (
+    <InputStep
+      mode={mode}
+      role={role}
+      value={original}
+      onChange={setOriginal}
+      currentProjectTitle={projectId != null ? projectTitle : null}
+      projectName={projectName}
+      onProjectNameChange={setProjectName}
+      onExecute={onExecute}
+      onBack={() => navigate("/role")}
+      inFlight={inFlight}
+    />
+  );
+
+  // /result is only valid mid/after a rewrite (or when viewing history);
+  // a cold hit (e.g. refresh) bounces back to /input.
+  const hasResultContext =
+    streaming ||
+    inFlight ||
+    !!result ||
+    !!viewingRun ||
+    streamSegments.length > 0 ||
+    streamSummary !== "";
+
+  let resultStep: ReactNode;
+  if (!hasResultContext) {
+    resultStep = <Navigate to="/input" replace />;
+  } else if (mode === "auto") {
+    resultStep = (
+      <AutoResult
+        data={
+          viewingRun
+            ? (result as AutoResultData)
+            : { summary: streamSummary, segments: streamSegments }
+        }
+        streaming={streaming}
+        title={resultTitle}
+        actions={streaming ? null : resultActions}
+      />
+    );
+  } else if (result) {
+    resultStep = (
+      <ReviewResult
+        data={result as ReviewData}
+        title={resultTitle}
+        actions={resultActions}
+      />
+    );
+  } else {
+    // review in flight, awaiting the (non-streamed) response
+    resultStep = (
+      <div className="flex min-h-[70vh] items-center justify-center px-8">
+        <LoadingTerminal mode={mode} />
+      </div>
+    );
+  }
+
+  // TopBar step indicator derived from the URL.
+  const pathStage: Stage = location.pathname.startsWith("/role")
+    ? "role"
+    : location.pathname.startsWith("/input")
+      ? "input"
+      : location.pathname.startsWith("/result")
+        ? mode === "review" && inFlight && !result
+          ? "loading"
+          : "result"
+        : "mode";
+
   return (
     <div className="min-h-screen bg-bg">
       <TopBar
-        stage={stage}
+        stage={pathStage}
         usage={usage}
         email={user?.email}
-        onHistory={() => setStage("history")}
+        historyActive={location.pathname.startsWith("/history")}
+        onHome={goHome}
+        onHistory={() => navigate("/history")}
         onSettings={() => setSettingsOpen(true)}
         onLogout={logout}
       />
 
       <main>
-        {stage === "mode" && (
-          <ModeStep
-            onSelect={(m) => {
-              setMode(m);
-              setStage("role");
-            }}
-          />
-        )}
-
-        {stage === "role" && (
-          <RoleStep
-            mode={mode}
-            onSelect={(r) => {
-              setRole(r);
-              setStage("input");
-            }}
-            onBack={() => setStage("mode")}
-          />
-        )}
-
-        {stage === "input" && (
-          <>
-            {error && (
-              <ErrorPanel
-                error={error}
-                onRetry={runRewrite}
-                onBack={() => setError(null)}
-              />
-            )}
-            {!error && (
-              <InputStep
-                mode={mode}
-                role={role}
-                value={original}
-                onChange={setOriginal}
-                currentProjectTitle={projectId != null ? projectTitle : null}
-                projectName={projectName}
-                onProjectNameChange={setProjectName}
-                onExecute={runRewrite}
-                onBack={() => setStage("role")}
-                inFlight={inFlight}
-              />
-            )}
-          </>
-        )}
-
-        {stage === "loading" && (
-          <div className="flex min-h-[70vh] items-center justify-center px-8">
-            <LoadingTerminal mode={mode} />
-          </div>
-        )}
-
-        {stage === "result" && result && mode === "auto" && (
-          <AutoResult
-            data={result as AutoResultData}
-            original={original}
-            title={resultTitle}
-            actions={resultActions}
-          />
-        )}
-
-        {stage === "result" && result && mode === "review" && (
-          <ReviewResult
-            data={result as ReviewData}
-            title={resultTitle}
-            actions={resultActions}
-          />
-        )}
-
-        {(stage === "history" || stage === "project") && (
-          <ProjectsView onOpenRun={openRun} onContinue={
-            (pid, title, seed) => {
-              setProjectId(pid);
-              setProjectTitle(title);
-              setViewingRun(null);
-              iterateProject(seed);
+        <Routes>
+          <Route path="/" element={<Navigate to="/mode" replace />} />
+          <Route path="/mode" element={modeStep} />
+          <Route path="/role" element={roleStep} />
+          <Route path="/input" element={inputStep} />
+          <Route path="/result" element={resultStep} />
+          <Route
+            path="/history"
+            element={
+              <ProjectsView onOpenRun={openRun} onContinue={continueProject} />
             }
-          } />
-        )}
+          />
+          <Route
+            path="/history/:projectId"
+            element={
+              <ProjectsView onOpenRun={openRun} onContinue={continueProject} />
+            }
+          />
+          <Route path="*" element={<Navigate to="/mode" replace />} />
+        </Routes>
       </main>
 
       <SettingsDialog

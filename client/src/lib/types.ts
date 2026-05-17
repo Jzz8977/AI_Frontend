@@ -38,27 +38,22 @@ export interface MeResponse {
   usage: Usage;
 }
 
-// ---- Rewrite results (r1.md §5.4) ----
+// ---- Rewrite results ----
 
-export type DiffType = "upgrade" | "add" | "remove" | "rephrase";
+// auto = streamed NDJSON: a summary + per-segment before/after compare.
+export type SegmentKind = "skills" | "experience" | "project";
 
-export interface DiffNote {
-  type: DiffType;
-  from: string;
-  to: string;
-  why: string;
+export interface AutoSegment {
+  kind: SegmentKind;
+  title: string;
+  original: string;
+  rewritten: string;
+  note: string;
 }
 
 export interface AutoResult {
   summary: string;
-  highlights: string[];
-  skills: {
-    core: string[];
-    ai: string[];
-    extra: string[];
-  };
-  rewritten_experience: string;
-  diff_notes: DiffNote[];
+  segments: AutoSegment[];
 }
 
 export type IssueSeverity = "high" | "medium" | "low";

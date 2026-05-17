@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tag } from "@/components/ui/tag";
@@ -11,9 +12,9 @@ import {
 import type { ProjectDetail, ProjectSummary, Run } from "@/lib/types";
 
 interface ProjectsViewProps {
-  /** Open a single past run in the result screen (read-only). */
+  /** Open a past run on the result screen (App navigates to "/"). */
   onOpenRun: (run: Run, project: ProjectDetail["project"]) => void;
-  /** Iterate: start a new version inside this project (seed = latest original). */
+  /** Iterate: new version in this project (seed = latest original). */
   onContinue: (
     projectId: number,
     title: string,
@@ -24,8 +25,11 @@ interface ProjectsViewProps {
 const fmt = (s: string) => s.replace("T", " ").slice(0, 16);
 
 export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
+  const navigate = useNavigate();
+  const { projectId: pidParam } = useParams();
+  const openId = pidParam ? Number.parseInt(pidParam, 10) : null;
+
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
-  const [openId, setOpenId] = useState<number | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -39,22 +43,26 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
     }
   }, []);
 
+  // List view: load the list. Detail view: load that project.
   useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const open = useCallback(async (id: number) => {
-    setOpenId(id);
-    setLoading(true);
-    try {
-      setDetail(await getProject(id));
-    } catch {
-      toast.error("加载项目详情失败");
-      setOpenId(null);
-    } finally {
-      setLoading(false);
+    if (openId == null) {
+      setDetail(null);
+      refresh();
+      return;
     }
-  }, []);
+    let alive = true;
+    setLoading(true);
+    getProject(openId)
+      .then((d) => alive && setDetail(d))
+      .catch(() => {
+        toast.error("加载项目详情失败");
+        navigate("/history", { replace: true });
+      })
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [openId, refresh, navigate]);
 
   const onRename = useCallback(
     async (id: number, current: string) => {
@@ -63,13 +71,13 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
       try {
         await renameProject(id, next);
         toast.success("已重命名");
-        await refresh();
-        if (openId === id) await open(id);
+        if (openId === id) setDetail(await getProject(id));
+        else await refresh();
       } catch {
         toast.error("重命名失败");
       }
     },
-    [refresh, open, openId]
+    [refresh, openId]
   );
 
   const onDelete = useCallback(
@@ -79,20 +87,24 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
       try {
         await deleteProject(id);
         toast.success("已删除");
-        if (openId === id) {
-          setOpenId(null);
-          setDetail(null);
-        }
-        await refresh();
+        if (openId === id) navigate("/history", { replace: true });
+        else await refresh();
       } catch {
         toast.error("删除失败");
       }
     },
-    [refresh, openId]
+    [refresh, openId, navigate]
   );
 
   // ---- Detail (versions of one project) ----
-  if (openId != null && detail) {
+  if (openId != null) {
+    if (loading || !detail) {
+      return (
+        <div className="mx-auto max-w-[1100px] px-8 py-14 font-mono text-xs text-text-muted">
+          loading…
+        </div>
+      );
+    }
     const { project, runs } = detail;
     const latest = runs[runs.length - 1];
     return (
@@ -111,10 +123,7 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => {
-                setOpenId(null);
-                setDetail(null);
-              }}
+              onClick={() => navigate("/history")}
             >
               ← 项目列表
             </Button>
@@ -130,10 +139,6 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
             )}
           </div>
         </div>
-
-        {loading && (
-          <p className="font-mono text-xs text-text-muted">loading…</p>
-        )}
 
         <div className="space-y-px">
           {runs.map((r) => (
@@ -188,7 +193,7 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
               className="flex items-center justify-between gap-4 border border-border bg-panel px-6 py-5"
             >
               <button
-                onClick={() => open(p.id)}
+                onClick={() => navigate(`/history/${p.id}`)}
                 className="flex-1 text-left"
               >
                 <div className="flex items-center gap-3">
