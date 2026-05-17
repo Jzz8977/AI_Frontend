@@ -1,0 +1,148 @@
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/700.css";
+@import "@fontsource/inter-tight/200.css";
+@import "@fontsource/inter-tight/300.css";
+@import "@fontsource/inter-tight/400.css";
+@import "@fontsource/inter-tight/500.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* §4.1 色板 — IDE / 终端美学 */
+    --bg: #0a0a0a;
+    --panel: #111111;
+    --panel-2: #161616;
+    --border: #222222;
+    --border-hi: #2e2e2e;
+
+    --text: #e8e8e8;
+    --text-dim: #8a8a8a;
+    --text-muted: #5a5a5a;
+
+    --green: #3fb950;
+    --green-dim: #1f4d26;
+    --amber: #f0a04b;
+    --red: #f87171;
+    --blue: #7dd3fc;
+
+    --radius: 0px;
+
+    /* §4.2 字体 */
+    --font-mono: "JetBrains Mono", "SF Mono", "Roboto Mono", Menlo, monospace;
+    --font-sans: "Inter Tight", "Söhne", -apple-system, BlinkMacSystemFont,
+      sans-serif;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* §4.6 ::selection */
+  ::selection {
+    background: var(--green);
+    color: #000;
+  }
+
+  /* §4.6 自定义滚动条 — 黑灰细条 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--bg);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #2a2a2a;
+    border: 2px solid var(--bg);
+    border-radius: 0;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #3a3a3a;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #2a2a2a var(--bg);
+  }
+
+  /* §4.6 button focus — 去掉默认 outline,自定义 focus */
+  button:focus {
+    outline: none;
+  }
+  button:focus-visible,
+  a:focus-visible,
+  textarea:focus-visible,
+  input:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 1px var(--green);
+  }
+}
+
+@layer utilities {
+  /* §4.5 keyframes */
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.5;
+      transform: scale(0.85);
+    }
+  }
+  @keyframes blink {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .anim-pulse {
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  .anim-blink {
+    animation: blink 1s step-end infinite;
+  }
+  .anim-fadeIn {
+    animation: fadeIn 0.3s ease-out both;
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+  .font-sans {
+    font-family: var(--font-sans);
+  }
+}

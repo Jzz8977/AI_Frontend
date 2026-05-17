@@ -1,0 +1,15 @@
+{
+  "name": "resume-rewriter-portal",
+  "version": "1.0.0",
+  "description": "简历改写门户 — React + Express + OpenRouter",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "dev": "concurrently -n server,client -c green,cyan \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
