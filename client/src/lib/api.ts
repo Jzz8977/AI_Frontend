@@ -1,14 +1,18 @@
 import type {
   ApiError,
   AuthResponse,
+  AutoSegment,
+  KnowledgeTopic,
   MeResponse,
+  Mindmap,
   Mode,
   ModelId,
-  OrchestrateResponse,
+  OrchestrationIteration,
   ProjectDetail,
   ProjectSummary,
   RewriteResponse,
   RoleId,
+  Usage,
 } from "./types";
 
 const TOKEN_KEY = "rr_token";
@@ -157,25 +161,164 @@ export function rewrite(
   });
 }
 
-// ---- #1 深度编排 (非流式;改写→评估→没达目标不结束 循环) ----
-export function orchestrate(
-  role: RoleId,
-  original: string,
-  model: ModelId,
-  project?: { projectId?: number | null; projectTitle?: string | null },
-  targetScore?: number
-) {
-  return api<OrchestrateResponse>("/api/orchestrate", {
-    method: "POST",
-    body: {
-      role,
-      original,
-      model,
-      ...(project?.projectId != null ? { projectId: project.projectId } : {}),
-      ...(project?.projectTitle ? { projectTitle: project.projectTitle } : {}),
-      ...(targetScore != null ? { targetScore } : {}),
-    },
-  });
+// ---- #1 深度编排 (phased SSE;改写→评估→没达目标不结束 循环) ----
+export interface OrchestrateStreamHandlers {
+  /** 每轮 评估 完成后的进度心跳(精修中,尚无结果)。 */
+  onIter: (info: {
+    attempt?: number;
+    score?: number;
+    targetScore?: number;
+    ceiling?: number;
+  }) => void;
+  onMeta: (summary: string) => void;
+  onSegment: (seg: AutoSegment) => void;
+  /** 所有分段已下发完毕(知识点/学习路线 仍在后台跑)。 */
+  onSegDone: () => void;
+  /** #2 知识点跑完一次性下发(可能为空数组)。 */
+  onKnowledge: (knowledge: KnowledgeTopic[]) => void;
+  /** #3 学习路线跑完一次性下发(可能为 null)。 */
+  onMindmap: (mindmap: Mindmap | null) => void;
+  onEnd: (info: {
+    score?: number;
+    iterations?: OrchestrationIteration[];
+    usage?: Usage;
+    projectId: number | null;
+    projectTitle: string | null;
+    runId?: number;
+    version?: number;
+  }) => void;
+  onError: (err: ApiError) => void;
+}
+
+/**
+ * POST /api/orchestrate (phased SSE) — 精修循环跑完先 flush 分段,知识点 /
+ * 学习路线各自跑完再各 flush 一帧。返回 abort fn。校验/鉴权失败仍以普通
+ * JSON 返回(与 streamRewrite 同形)。
+ */
+export function streamOrchestrate(
+  params: {
+    role: RoleId;
+    original: string;
+    model: ModelId;
+    projectId?: number | null;
+    projectTitle?: string | null;
+    targetScore?: number;
+  },
+  h: OrchestrateStreamHandlers
+): () => void {
+  const ctrl = new AbortController();
+  const token = getToken();
+
+  (async () => {
+    let res: Response;
+    try {
+      res = await fetch("/api/orchestrate", {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          role: params.role,
+          original: params.original,
+          model: params.model,
+          ...(params.projectId != null
+            ? { projectId: params.projectId }
+            : {}),
+          ...(params.projectTitle ? { projectTitle: params.projectTitle } : {}),
+          ...(params.targetScore != null
+            ? { targetScore: params.targetScore }
+            : {}),
+        }),
+      });
+    } catch {
+      h.onError({ status: 0, message: "网络错误,无法连接到服务器。" });
+      return;
+    }
+
+    if (!res.ok || !res.body) {
+      const d = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (res.status === 401) {
+        clearToken();
+        onUnauthorized?.();
+      }
+      h.onError({
+        status: res.status,
+        message: (d.error as string) || `请求失败 (${res.status})`,
+        usage: d.usage as ApiError["usage"],
+      });
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let sep: number;
+        while ((sep = buf.indexOf("\n\n")) >= 0) {
+          const frame = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          const line = frame.split("\n").find((l) => l.startsWith("data:"));
+          if (!line) continue;
+          let evt: Record<string, unknown>;
+          try {
+            evt = JSON.parse(line.slice(5).trim());
+          } catch {
+            continue;
+          }
+          if (evt.t === "iter")
+            h.onIter({
+              attempt: evt.attempt as number | undefined,
+              score: evt.score as number | undefined,
+              targetScore: evt.targetScore as number | undefined,
+              ceiling: evt.ceiling as number | undefined,
+            });
+          else if (evt.t === "meta") h.onMeta((evt.summary as string) ?? "");
+          else if (evt.t === "seg")
+            h.onSegment({
+              kind: (evt.kind as AutoSegment["kind"]) ?? "experience",
+              title: (evt.title as string) ?? "",
+              original: (evt.original as string) ?? "",
+              rewritten: (evt.rewritten as string) ?? "",
+              note: (evt.note as string) ?? "",
+            });
+          else if (evt.t === "segdone") h.onSegDone();
+          else if (evt.t === "knowledge")
+            h.onKnowledge((evt.knowledge as KnowledgeTopic[]) ?? []);
+          else if (evt.t === "mindmap")
+            h.onMindmap((evt.mindmap as Mindmap | null) ?? null);
+          else if (evt.t === "end")
+            h.onEnd({
+              score: evt.score as number | undefined,
+              iterations: evt.iterations as
+                | OrchestrationIteration[]
+                | undefined,
+              usage: evt.usage as Usage | undefined,
+              projectId: (evt.projectId as number | null) ?? null,
+              projectTitle: (evt.projectTitle as string | null) ?? null,
+              runId: evt.runId as number | undefined,
+              version: evt.version as number | undefined,
+            });
+          else if (evt.t === "error")
+            h.onError({
+              status: 502,
+              message: (evt.error as string) || "深度编排失败",
+              usage: evt.usage as ApiError["usage"],
+            });
+        }
+      }
+    } catch {
+      if (!ctrl.signal.aborted)
+        h.onError({ status: 0, message: "流式连接中断,请重试。" });
+    }
+  })();
+
+  return () => ctrl.abort();
 }
 
 // ---- Streaming rewrite (auto only, NDJSON over SSE) ----

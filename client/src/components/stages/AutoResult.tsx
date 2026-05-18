@@ -18,6 +18,9 @@ interface AutoResultProps {
   data: AutoResultData;
   /** True while segments are still streaming in. */
   streaming?: boolean;
+  /** True while a phased 深度编排 stream is still running (知识点/学习路线
+   *  尚未下发时,对应 tab 显示「生成中」而非「仅深度编排包含」提示)。 */
+  orchestrating?: boolean;
   title?: string;
   actions?: ReactNode;
 }
@@ -266,8 +269,30 @@ const LEVEL_COLOR: Record<
   "green" | "blue" | "amber"
 > = { 核心: "green", 进阶: "blue", 加分: "amber" };
 
-function KnowledgeView({ knowledge }: { knowledge: KnowledgeTopic[] }) {
+function PendingPanel({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2.5 border border-border bg-panel p-6 font-mono text-[12px] text-amber">
+      <Dot color="amber" pulse size={7} />
+      {children}
+    </div>
+  );
+}
+
+function KnowledgeView({
+  knowledge,
+  orchestrating,
+}: {
+  knowledge: KnowledgeTopic[];
+  orchestrating?: boolean;
+}) {
   if (!knowledge.length) {
+    if (orchestrating) {
+      return (
+        <PendingPanel>
+          深度编排进行中:精修循环已结束,正在提炼知识点…
+        </PendingPanel>
+      );
+    }
     return (
       <div className="border border-border bg-panel p-6 font-mono text-[12px] text-text-muted">
         // 知识点仅「深度编排」结果包含。在输入页开启「深度编排」后重新生成即可。
@@ -335,8 +360,21 @@ function KnowledgeView({ knowledge }: { knowledge: KnowledgeTopic[] }) {
 const SKETCH =
   "border-2 border-text shadow-[4px_4px_0_0_rgba(0,0,0,0.45)]";
 
-function MindmapView({ mindmap }: { mindmap: Mindmap | null }) {
+function MindmapView({
+  mindmap,
+  orchestrating,
+}: {
+  mindmap: Mindmap | null;
+  orchestrating?: boolean;
+}) {
   if (!mindmap || !mindmap.phases.length) {
+    if (orchestrating) {
+      return (
+        <PendingPanel>
+          深度编排进行中:知识点已就绪,正在用 DeepSeek 编排学习路线…
+        </PendingPanel>
+      );
+    }
     return (
       <div className="border border-border bg-panel p-6 font-mono text-[12px] text-text-muted">
         // 学习路线仅「深度编排」结果包含(该步骤始终由 DeepSeek 生成)。开启「深度编排」后重新生成即可。
@@ -521,6 +559,7 @@ function SegmentCard({ seg, n }: { seg: AutoSegment; n: number }) {
 export function AutoResult({
   data,
   streaming = false,
+  orchestrating = false,
   title = "改写完成",
   actions,
 }: AutoResultProps) {
@@ -583,9 +622,9 @@ export function AutoResult({
       ) : view === "tpl" ? (
         <TemplateView summary={summary} segments={segments} />
       ) : view === "kn" ? (
-        <KnowledgeView knowledge={knowledge} />
+        <KnowledgeView knowledge={knowledge} orchestrating={orchestrating} />
       ) : view === "mm" ? (
-        <MindmapView mindmap={mindmap} />
+        <MindmapView mindmap={mindmap} orchestrating={orchestrating} />
       ) : (
         <div className="space-y-px">
           <SummaryCard summary={summary} />

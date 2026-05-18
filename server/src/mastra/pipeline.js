@@ -175,45 +175,56 @@ const evaluateStep = createStep({
 const KNOWLEDGE_SYSTEM =
   '你是技术面试官 + 学习规划师。只输出 JSON,不要任何前后缀或代码块。';
 
+/**
+ * #2 知识点提炼核心逻辑(独立可调用,供 Mastra step 与 phased-SSE 路由共用)。
+ * 失败返回 [](additive,绝不抛错沉掉改写结果)。
+ */
+export async function extractKnowledge({ role, model, apiKey, summary, segments }) {
+  const label = ROLE_LABEL[role] ?? role;
+  const prompt = [
+    `下面是一份面向「${label}」岗位的改写后简历。提炼出:要在面试中撑起这份简历、候选人必须掌握的结构化知识点。`,
+    '按主题归类,每个主题给 level(核心/进阶/加分)和 3~6 条具体知识点(可考的点 / 易被追问的点)。覆盖简历里出现的技术与项目,聚焦 2026 岗位标准,不泛泛而谈。',
+    '只输出 JSON:{"knowledge":[{"topic":"主题名","level":"核心|进阶|加分","points":["知识点1","知识点2"]}]} ,6~10 个主题。',
+    `## 简历\n${JSON.stringify({ summary, segments })}`,
+  ].join('\n\n');
+  try {
+    const r = await callJson({
+      prompt,
+      system: KNOWLEDGE_SYSTEM,
+      model,
+      apiKey,
+    });
+    if (Array.isArray(r?.knowledge)) {
+      return r.knowledge
+        .filter((k) => k && typeof k.topic === 'string')
+        .map((k) => ({
+          topic: String(k.topic),
+          level: ['核心', '进阶', '加分'].includes(k.level) ? k.level : '核心',
+          points: Array.isArray(k.points)
+            ? k.points.map(String).filter(Boolean)
+            : [],
+        }));
+    }
+  } catch {
+    // Knowledge is additive — a failure here must not sink the rewrite.
+  }
+  return [];
+}
+
 const knowledgeStep = createStep({
   id: 'knowledge',
   inputSchema: stateSchema,
   outputSchema: stateSchema,
-  execute: async ({ inputData: s }) => {
-    const label = ROLE_LABEL[s.role] ?? s.role;
-    const prompt = [
-      `下面是一份面向「${label}」岗位的改写后简历。提炼出:要在面试中撑起这份简历、候选人必须掌握的结构化知识点。`,
-      '按主题归类,每个主题给 level(核心/进阶/加分)和 3~6 条具体知识点(可考的点 / 易被追问的点)。覆盖简历里出现的技术与项目,聚焦 2026 岗位标准,不泛泛而谈。',
-      '只输出 JSON:{"knowledge":[{"topic":"主题名","level":"核心|进阶|加分","points":["知识点1","知识点2"]}]} ,6~10 个主题。',
-      `## 简历\n${JSON.stringify({ summary: s.summary, segments: s.segments })}`,
-    ].join('\n\n');
-    let knowledge = [];
-    try {
-      const r = await callJson({
-        prompt,
-        system: KNOWLEDGE_SYSTEM,
-        model: s.model,
-        apiKey: s.apiKey,
-      });
-      if (Array.isArray(r?.knowledge)) {
-        knowledge = r.knowledge
-          .filter((k) => k && typeof k.topic === 'string')
-          .map((k) => ({
-            topic: String(k.topic),
-            level: ['核心', '进阶', '加分'].includes(k.level)
-              ? k.level
-              : '核心',
-            points: Array.isArray(k.points)
-              ? k.points.map(String).filter(Boolean)
-              : [],
-          }));
-      }
-    } catch {
-      // Knowledge is additive — a failure here must not sink the rewrite.
-      knowledge = [];
-    }
-    return { ...s, knowledge };
-  },
+  execute: async ({ inputData: s }) => ({
+    ...s,
+    knowledge: await extractKnowledge({
+      role: s.role,
+      model: s.model,
+      apiKey: s.apiKey,
+      summary: s.summary,
+      segments: s.segments,
+    }),
+  }),
 });
 
 // #3 学习路线思维导图 — 始终走 DeepSeek(需求明确:该步骤只有 DeepSeek),
@@ -221,56 +232,64 @@ const knowledgeStep = createStep({
 const MINDMAP_SYSTEM =
   '你是资深技术学习规划师。把知识点组织成一条可执行的进阶学习路线。只输出 JSON,不要任何前后缀或代码块。';
 
+/**
+ * #3 学习路线思维导图核心逻辑(独立可调用)。始终走 DeepSeek。
+ * 失败返回 null(additive,绝不抛错沉掉改写/知识点结果)。
+ */
+export async function buildMindmap({ role, summary, segments, knowledge }) {
+  const label = ROLE_LABEL[role] ?? role;
+  const basis = knowledge?.length
+    ? JSON.stringify(knowledge)
+    : JSON.stringify({ summary, segments });
+  const prompt = [
+    `面向「${label}」岗位,把下列知识点编排成一张「学习路线思维导图」:中心是终极目标,向外按学习先后分 3~5 个阶段(由易到难、有依赖关系),每阶段挂 2~4 个主题节点,每节点 2~4 条要点。`,
+    '阶段要体现递进(基础→进阶→工程化→面试冲刺之类),duration 给周数区间。',
+    '只输出 JSON:{"goal":"中心目标(一句话)","phases":[{"name":"阶段名","duration":"如 2~3 周","topics":[{"title":"主题","points":["要点1","要点2"]}]}]}',
+    `## 知识点 / 简历依据\n${basis}`,
+  ].join('\n\n');
+  try {
+    // 强制 DeepSeek:忽略用户选的改写模型 / 自带 key。
+    const r = await callJson({ prompt, system: MINDMAP_SYSTEM, model: 'deepseek' });
+    if (r && typeof r.goal === 'string' && Array.isArray(r.phases)) {
+      return {
+        goal: String(r.goal),
+        phases: r.phases
+          .filter((p) => p && typeof p.name === 'string')
+          .map((p) => ({
+            name: String(p.name),
+            duration: typeof p.duration === 'string' ? p.duration : '',
+            topics: Array.isArray(p.topics)
+              ? p.topics
+                  .filter((t) => t && typeof t.title === 'string')
+                  .map((t) => ({
+                    title: String(t.title),
+                    points: Array.isArray(t.points)
+                      ? t.points.map(String).filter(Boolean)
+                      : [],
+                  }))
+              : [],
+          })),
+      };
+    }
+  } catch {
+    // Mindmap is additive — failure must not sink the rewrite/knowledge.
+  }
+  return null;
+}
+
 const mindmapStep = createStep({
   id: 'mindmap',
   inputSchema: stateSchema,
   outputSchema: stateSchema,
-  execute: async ({ inputData: s }) => {
-    const label = ROLE_LABEL[s.role] ?? s.role;
-    const basis = s.knowledge.length
-      ? JSON.stringify(s.knowledge)
-      : JSON.stringify({ summary: s.summary, segments: s.segments });
-    const prompt = [
-      `面向「${label}」岗位,把下列知识点编排成一张「学习路线思维导图」:中心是终极目标,向外按学习先后分 3~5 个阶段(由易到难、有依赖关系),每阶段挂 2~4 个主题节点,每节点 2~4 条要点。`,
-      '阶段要体现递进(基础→进阶→工程化→面试冲刺之类),duration 给周数区间。',
-      '只输出 JSON:{"goal":"中心目标(一句话)","phases":[{"name":"阶段名","duration":"如 2~3 周","topics":[{"title":"主题","points":["要点1","要点2"]}]}]}',
-      `## 知识点 / 简历依据\n${basis}`,
-    ].join('\n\n');
-    let mindmap = null;
-    try {
-      // 强制 DeepSeek:忽略 s.model / s.apiKey。
-      const r = await callJson({
-        prompt,
-        system: MINDMAP_SYSTEM,
-        model: 'deepseek',
-      });
-      if (r && typeof r.goal === 'string' && Array.isArray(r.phases)) {
-        mindmap = {
-          goal: String(r.goal),
-          phases: r.phases
-            .filter((p) => p && typeof p.name === 'string')
-            .map((p) => ({
-              name: String(p.name),
-              duration: typeof p.duration === 'string' ? p.duration : '',
-              topics: Array.isArray(p.topics)
-                ? p.topics
-                    .filter((t) => t && typeof t.title === 'string')
-                    .map((t) => ({
-                      title: String(t.title),
-                      points: Array.isArray(t.points)
-                        ? t.points.map(String).filter(Boolean)
-                        : [],
-                    }))
-                : [],
-            })),
-        };
-      }
-    } catch {
-      // Mindmap is additive — failure must not sink the rewrite/knowledge.
-      mindmap = null;
-    }
-    return { ...s, mindmap };
-  },
+  execute: async ({ inputData: s }) => ({
+    ...s,
+    mindmap: await buildMindmap({
+      role: s.role,
+      summary: s.summary,
+      segments: s.segments,
+      knowledge: s.knowledge,
+    }),
+  }),
 });
 
 const finalizeStep = createStep({
@@ -326,6 +345,96 @@ export async function runResumePipeline(input) {
     const msg =
       res.error?.message ||
       (typeof res.error === 'string' ? res.error : 'pipeline failed');
+    const err = new Error(msg);
+    err.code = 'PIPELINE';
+    throw err;
+  }
+  return res.result;
+}
+
+// ---------------------------------------------------------------------------
+// Phased streaming support: run ONLY the Mastra refine loop (init → dountil),
+// surfacing per-iteration progress via run.watch, and return the carry state
+// so the SSE route can flush segments, then run 知识点 / 学习路线 separately
+// and flush each as it lands. The "没达目标不结束" loop stays Mastra-driven.
+// ---------------------------------------------------------------------------
+
+const refineOutputSchema = z.object({
+  summary: z.string(),
+  segments: z.array(segmentSchema),
+  score: z.number(),
+  iterations: z.array(
+    z.object({ attempt: z.number(), score: z.number(), feedback: z.string() })
+  ),
+  role: z.enum(['frontend', 'fullstack', 'ai']),
+  model: z.string().nullable(),
+  apiKey: z.string().optional(),
+});
+
+const refineFinalizeStep = createStep({
+  id: 'refine-finalize',
+  inputSchema: stateSchema,
+  outputSchema: refineOutputSchema,
+  execute: async ({ inputData: s }) => ({
+    summary: s.summary,
+    segments: s.segments,
+    score: s.score,
+    iterations: s.trace,
+    role: s.role,
+    model: s.model,
+    apiKey: s.apiKey,
+  }),
+});
+
+export const refinePipeline = createWorkflow({
+  id: 'refine-pipeline',
+  inputSchema,
+  outputSchema: refineOutputSchema,
+})
+  .then(initStep)
+  .dountil(
+    refineLoop,
+    async ({ inputData: s }) =>
+      s.score >= s.targetScore || s.attempt >= s.maxIters
+  )
+  .then(refineFinalizeStep)
+  .commit();
+
+/**
+ * Run just the refine loop. `onIter({attempt, score})` fires after each
+ * evaluate step (best-effort, via run.watch — never fatal if the watch
+ * shape changes across Mastra versions).
+ * @returns {Promise<{summary,segments,score,iterations,role,model,apiKey}>}
+ */
+export async function runRefine(input, onIter) {
+  const run = await refinePipeline.createRun();
+  if (typeof onIter === 'function') {
+    try {
+      run.watch((ev) => {
+        try {
+          if (ev?.type !== 'workflow-step-result') return;
+          const p = ev.payload ?? {};
+          const id = String(p.id ?? '');
+          if (id !== 'evaluate' && !id.endsWith('.evaluate')) return;
+          if (p.status && p.status !== 'success') return;
+          const o = p.output ?? {};
+          onIter({
+            attempt: Number.isFinite(o.attempt) ? o.attempt : undefined,
+            score: Number.isFinite(o.score) ? o.score : undefined,
+          });
+        } catch {
+          /* watch is best-effort progress only */
+        }
+      });
+    } catch {
+      /* watch unsupported — degrade silently to no progress ticks */
+    }
+  }
+  const res = await run.start({ inputData: input });
+  if (res.status !== 'success') {
+    const msg =
+      res.error?.message ||
+      (typeof res.error === 'string' ? res.error : 'refine pipeline failed');
     const err = new Error(msg);
     err.code = 'PIPELINE';
     throw err;

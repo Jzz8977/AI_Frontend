@@ -6,11 +6,13 @@ import type { Mode } from "@/lib/types";
 
 interface LoadingTerminalProps {
   mode: Mode;
+  /** Extra live status line (e.g. 深度编排 iteration progress). */
+  note?: string;
 }
 
 /** r1.md §3.4 — 终端 loading 动画。每行 800ms 出现,完成行灰+绿✓,
  *  全部出现后追加橙色 waiting 行 + 闪烁光标。 */
-export function LoadingTerminal({ mode }: LoadingTerminalProps) {
+export function LoadingTerminal({ mode, note }: LoadingTerminalProps) {
   const lines = mode === "auto" ? LOADING_LINES_AUTO : LOADING_LINES_REVIEW;
   const [visible, setVisible] = useState(1);
 
@@ -65,7 +67,7 @@ export function LoadingTerminal({ mode }: LoadingTerminalProps) {
         {allShown && (
           <div className="anim-fadeIn flex items-center gap-2 text-amber">
             <span className="text-text-muted">$</span>
-            <span>正在等待 AI 响应</span>
+            <span>{note || "正在等待 AI 响应"}</span>
             <span className="anim-blink">_</span>
           </div>
         )}

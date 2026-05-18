@@ -16,8 +16,11 @@ interface TopBarProps {
   email?: string;
   /** True when the history routes are active (drives the [ 历史 ] highlight). */
   historyActive?: boolean;
+  /** True when the resume editor route is active. */
+  editorActive?: boolean;
   onHome: () => void;
   onHistory: () => void;
+  onEditor: () => void;
   onSettings: () => void;
   onLogout: () => void;
 }
@@ -28,15 +31,17 @@ export function TopBar({
   usage,
   email,
   historyActive = false,
+  editorActive = false,
   onHome,
   onHistory,
+  onEditor,
   onSettings,
   onLogout,
 }: TopBarProps) {
   const activeIndex = STEPS.findIndex((s) => s.key === stage);
 
   return (
-    <header className="sticky top-0 z-30 border-b border-border bg-bg/95 backdrop-blur">
+    <header className="no-print sticky top-0 z-30 border-b border-border bg-bg/95 backdrop-blur">
       <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-6 px-8 py-[14px]">
         {/* logo — 点击回首页 */}
         <button
@@ -111,6 +116,15 @@ export function TopBar({
             )}
           >
             [ 历史 ]
+          </button>
+          <button
+            onClick={onEditor}
+            className={cn(
+              "font-mono text-[11px] uppercase tracking-[1.5px] transition-colors hover:text-text",
+              editorActive ? "text-green" : "text-text-dim"
+            )}
+          >
+            [ 编辑器 ]
           </button>
           <button
             onClick={onSettings}

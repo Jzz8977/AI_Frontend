@@ -75,18 +75,26 @@
 
 | 方法 | 路径 | Body | 返回 |
 |---|---|---|---|
-| POST | `/api/orchestrate` | `{role, original, model?, projectId?, projectTitle?, targetScore?}` | `{ result, score, iterations, knowledge, mindmap, usage, projectId, projectTitle, runId?, version? }` |
+| POST | `/api/orchestrate` | `{role, original, model?, projectId?, projectTitle?, targetScore?}` | **phased SSE 流**(校验/限流失败仍以普通 JSON 400/401/404/429 返回) |
 
-- **非流式**。后端用 **Mastra workflow**(`server/src/mastra/`)编排:`init → dountil(改写 → 评估) → finalize`。"没达目标不结束" = `dountil` 重复 [改写→评估] **直到** 评分 ≥ `targetScore` **或** 达到迭代上限 `ITER_CEILING=4`(硬上限,防止无限循环/无限烧 token)。重试时把上一轮评审意见 + 上一版草稿喂回改写 prompt(修订而非重写)。
+- **phased SSE(分阶段流式)**,解决"等整条流水线太慢":精修循环跑完**立刻** flush 分段(分段对比/整理成稿/简历模板 即刻可用),知识点、学习路线各自跑完再各下发一帧。事件类型 `t`:
+  - `{"t":"iter","attempt","score","targetScore","ceiling"}` — 每轮 评估 完成的进度心跳(精修中,尚无结果;经 Mastra `run.watch` best-effort,缺失不影响结果)。
+  - `{"t":"meta","summary"}` + 多个 `{"t":"seg",...}` — 精修循环产出的最终改写,逐段下发。
+  - `{"t":"segdone"}` — 分段全部到位(前端据此结束「流式」态、亮出动作按钮)。
+  - `{"t":"knowledge","knowledge":[...]}` — #2 知识点跑完(可能空数组)。
+  - `{"t":"mindmap","mindmap":{...}|null}` — #3 学习路线跑完(可能 null)。
+  - `{"t":"end","score","iterations","usage","projectId","projectTitle","runId","version"}` — 干净收尾,**此时才计数+落库**。
+  - `{"t":"error","error",...}` — 失败收尾,不计数/不落库。客户端断开则不计数/不落库。
+- 后端用 **Mastra workflow**(`server/src/mastra/`):`refinePipeline = init → dountil(改写 → 评估) → refine-finalize`。"没达目标不结束" = `dountil` 重复 [改写→评估] **直到** 评分 ≥ `targetScore` **或** 达到迭代上限 `ITER_CEILING=4`(硬上限)。重试时把上一轮评审意见 + 上一版草稿喂回改写 prompt(修订而非重写)。知识点 / 学习路线 复用同一套核心逻辑(`extractKnowledge` / `buildMindmap`,Mastra step 与本路由共用),在精修循环之外按阶段调用以便逐帧 flush。
 - 改写步骤复用**流式 NDJSON 协议**(`STREAM_*` prompt)但非流式收集,经 `makeJsonExtractor` 拼成与流式端点**完全一致**的 `{summary, segments}`,故结果可直接喂 AutoResult / 整理成稿 / 简历模板。
-- 模型路由、错误契约、限流、落库规则与 `/api/rewrite` **完全一致**:配额预检 + 仅成功才扣 + run 尽力落库(mode=`auto`)。pipeline 内任一步失败(模型/解析)→ `502 { error }`,**不计数**。
+- 模型路由、错误契约、限流、落库规则与 `/api/rewrite` **完全一致**:配额预检 + 仅干净收尾才扣 + run 尽力落库(mode=`auto`,`result = {summary, segments, knowledge, mindmap}`)。精修循环失败(模型/解析)→ `{"t":"error"}`,**不计数**;知识点/学习路线失败仅置空/`null`,不影响已出的改写。
 - `targetScore`(可选,`[1,100]`,默认 85);`role`/`original`/`model`/`projectId`/`projectTitle` 校验同 `/api/rewrite`。
-- `score`=最终评分;`iterations`=`[{attempt,score,feedback}]` 迭代轨迹。
-- **#2 知识点**:精修循环后追加 `knowledge` 步骤,从最终改写稿提炼 `knowledge:[{topic, level:"核心"|"进阶"|"加分", points:string[]}]`(6~10 主题)。该步骤失败仅置空数组,不影响改写结果。`knowledge` **同时写入 run 的 `result_json`**(`result = {summary, segments, knowledge}`),故历史复用也带知识点。响应里 `knowledge` 与 `result.knowledge` 同值。
+- `score`=最终评分(`end` 帧);`iterations`=`[{attempt,score,feedback}]` 迭代轨迹(`end` 帧)。
+- **#2 知识点**:精修循环后跑 `extractKnowledge`,从最终改写稿提炼 `knowledge:[{topic, level:"核心"|"进阶"|"加分", points:string[]}]`(6~10 主题)。失败仅置空数组,不影响改写结果。`knowledge` **写入 run 的 `result_json`**(`result = {summary, segments, knowledge}`),故历史复用也带知识点。
 - 前端:AutoResult 第 4 个 tab「知识点」按 level 着色(核心绿/进阶蓝/加分琥珀),「复制清单」导出 Markdown;非深度编排结果该 tab 显示提示文案。
-- **#3 学习路线思维导图**:knowledge 步骤后追加 `mindmap` 步骤,**始终强制走 DeepSeek**(忽略用户选的改写模型与自带 key,用服务端 `DEEPSEEK_API_KEY`)。基于 knowledge(空则回退 summary+segments)产出 `mindmap:{goal, phases:[{name, duration, topics:[{title, points:string[]}]}]}`(3~5 阶段递进)。失败置 `null`,不影响其余结果。`mindmap` 一并写入 `result_json`(`result = {summary, segments, knowledge, mindmap}`)。响应 `mindmap` 与 `result.mindmap` 同值。
+- **#3 学习路线思维导图**:knowledge 后跑 `buildMindmap`,**始终强制走 DeepSeek**(忽略用户选的改写模型与自带 key,用服务端 `DEEPSEEK_API_KEY`)。基于 knowledge(空则回退 summary+segments)产出 `mindmap:{goal, phases:[{name, duration, topics:[{title, points:string[]}]}]}`(3~5 阶段递进)。失败置 `null`,不影响其余结果。`mindmap` 一并写入 `result_json`(`result = {summary, segments, knowledge, mindmap}`)。
 - 前端:AutoResult 第 5 个 tab「学习路线」以 Excalidraw 风格(粗描边+错位投影+轻微旋转)横向渲染 中心目标→阶段链→主题/要点,「复制路线」导出 Markdown;非深度编排结果显示提示文案。完整 Excalidraw 原生编辑/导出留作后续增强。
-- 前端:input 页 **auto 模式**有「深度编排」开关(`deep`),开启则 `onExecute` 走 `orchestrate()` 而非 `streamRewrite()`;`/result` 在编排进行中(`inFlight && !result && !streaming`)显示 LoadingTerminal,完成后复用 AutoResult,标题附「评分 N(M 轮编排)」。review 模式不显示该开关。
+- 前端:input 页 **auto 模式**有「深度编排」开关(`deep`),开启则 `onExecute` 走 `streamOrchestrate()` 而非 `streamRewrite()`。`/result`:精修循环出第一段前显示 `LoadingTerminal`(`note` 带轮次进度心跳「精修中 · 第 N 轮 · 评分 M/目标」);分段到位(`segdone`)后切 AutoResult、`streaming` 转 false、动作按钮亮出,**用户即可读/复制分段对比 / 整理成稿 / 简历模板**;此间 `orchStreaming` 仍为真,「知识点」「学习路线」tab 显示"生成中"占位,各自帧到后填充;`end` 帧落 `orch` 评分,标题附「评分 N(M 轮编排)」。review 模式不显示该开关。
 
 ## 项目历史 (JWT, Bearer)
 
@@ -105,11 +113,13 @@ react-router,**每一步独立路由**(未登录任意路径显示 auth):
 - `/` → 重定向 `/mode`。`/mode` `/role` `/input` `/result` 各为一步;返回按钮也走路由(`navigate("/mode|/role")`)。
 - `/result` 守卫:无流式/结果/历史上下文(如刷新冷启)时重定向 `/input`。review 等待响应时该路由内显示 loading 动画。
 - `/history` — 项目列表。`/history/:projectId` — 该项目版本列表(点版本 → 设状态并 `navigate("/result")` 只读复用)。
+- `/editor` — #6 在线简历编辑器(独立路由,登录后可经 TopBar「编辑器」或结果页「在编辑器中编辑」进入;`onBack` 走 `navigate(-1)`)。
 - 其它路径重定向 `/mode`。TopBar 左上角 `前端方向部` 点击回 `/mode`;「历史」→ `/history`,据 `location` 高亮;步骤指示由 `location.pathname` 推导。
 - `auto` 结果页有「分段对比 / 整理成稿 / 简历模板」三切换:
   - **整理成稿**把 summary + 各段 `rewritten` 拼成一篇分组(技能/工作经历/项目)Markdown,带「复制全文」按钮(`navigator.clipboard`),流式期间同步增量。
-  - **简历模板**:左侧用户补充姓名/意向岗位/电话/邮箱/城市/教育经历,右侧实时拼成可直接投递的完整简历 Markdown,「复制简历全文」「清空补充」。补充字段**仅存浏览器 `localStorage`(键 `resume_tpl_profile`),不上传服务器**;`logout` 不清它(属用户本地数据)。完整在线简历编辑器(参考 magic-resume)为待办 #6,后续单独交付。
-- 全局 footer 隐私说明(措辞须与实现一致,**不得**写"从不存储"):简历内容仅用于生成、不对外共享/不训练;生成版本入账户历史、可在「历史」一键删除;简历模板补充字段仅存本地浏览器。
+  - **简历模板**:左侧用户补充姓名/意向岗位/电话/邮箱/城市/教育经历,右侧实时拼成可直接投递的完整简历 Markdown,「复制简历全文」「清空补充」。补充字段**仅存浏览器 `localStorage`(键 `resume_tpl_profile`),不上传服务器**;`logout` 不清它(属用户本地数据)。
+  - auto 结果页动作区另有「在编辑器中编辑」:把当前 `{summary, segments}` 经 `docFromAutoResult` 映射为结构化简历种子(写 `localStorage` 键 `resume_editor_seed`),`navigate("/editor")` 打开 #6 编辑器并一次性消费该种子(消费后立即删除)。
+- 全局 footer 隐私说明(措辞须与实现一致,**不得**写"从不存储"):简历内容仅用于生成、不对外共享/不训练;生成版本入账户历史、可在「历史」一键删除;简历模板补充字段与在线编辑器整份简历仅存本地浏览器、清浏览器数据即丢失。
 
 `auth(登录/注册) → mode → role → input → result`
 - `auto`:点 EXECUTE 直接进 `result`,流式逐段渲染**左右对比卡**(summary + 技能/每家公司/每个项目各一张),
@@ -136,6 +146,17 @@ react-router,**每一步独立路由**(未登录任意路径显示 auth):
 - `server/Dockerfile`:`node:22-bookworm-slim`,**不装系统编译链**(better-sqlite3 用 linux-x64/node22 预编译二进制)。`db.js` 的 `DB_PATH` 可经 env 覆盖(默认 `server/data.db` 不变);compose 设 `DB_PATH=/data/data.db` 挂命名卷 `rr-data`,重启不丢数据(已验证)。
 - `client/Dockerfile` 多阶段(Vite build → nginx);`client/nginx.conf`:SPA `try_files /index.html`,`/api/` 反代 `server:3001` 且对 SSE/长耗时 orchestrate 关 buffering、`proxy_read_timeout 600s`。
 - `server/.env` 经 compose `env_file` 注入,不入镜像(`.dockerignore`)。
+
+## 在线简历编辑器 (#6, 继承 magic-resume 思路, 纯前端)
+
+- 路由 `/editor`,组件 `client/src/components/stages/ResumeEditor.tsx`,模型与序列化在 `client/src/lib/resume-doc.ts`,类型 `ResumeDoc` 等在 `lib/types.ts`。
+- **结构化文档**:`basics(name/title/phone/email/city/website)` + `summary` + `skills` + `experience[]` + `projects[]` + `education[]` + `custom[]` + `template`。`experience/projects` 每项含 `bullets:string[]`(每行一条)。
+- **持久化**:整份文档仅写浏览器 `localStorage` 键 `resume_editor_doc`(每次编辑即存),**绝不上传服务器**;`normalizeDoc` 容错收敛任意 JSON;`logout` 不清(属用户本地数据)。
+- **实时预览**:右栏白纸 A4 风格(固定浅色,不随暗色应用主题变),三套模板 `classic|compact|timeline`(纯 CSS 变体)。
+- **列表项**:工作/项目/教育/自定义模块均可「+ 添加」、上移 ↑ / 下移 ↓ 重排(无第三方 DnD 依赖)、删除。
+- **导入/导出**:`导出 JSON`(下载结构化文档,可再导入续编)、`导入 JSON`(经 `normalizeDoc`)、`复制 Markdown`(`docToMarkdown` 拼整篇)、`导出 PDF / 打印`(`window.print()` + `@media print`:`.no-print` 隐藏应用外壳,`.resume-paper` 去阴影铺满)。
+- **从改写结果带入**:auto 结果页「在编辑器中编辑」→ `docFromAutoResult(summary,segments)` 映射为种子写 `resume_editor_seed`,编辑器挂载时一次性消费(`segments` 按 kind 落到 skills/experience/projects,标题尽力拆 公司·岗位·时间,rewritten 按行拆 bullets)。
+- TopBar 增「编辑器」入口(`/editor` 高亮);该路由不属创建流程步骤,不参与顶部 step 进度高亮。
 
 ## 文案 (#5 全中文)
 

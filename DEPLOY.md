@@ -100,3 +100,108 @@ docker run --rm -v resume-portal_rr-data:/d -v $PWD:/b alpine \
 ```
 
 出站需放行 `api.deepseek.com`(及用到 OpenRouter 时 `openrouter.ai`)。
+
+---
+
+# 宝塔(aaPanel)部署 — PM2 原生方式(前后端分开,推荐)
+
+不用 Docker。后端 Node + PM2 守护,前端 `npm run build` 出静态文件挂宝塔站点,站点 nginx 反代 `/api` → 后端。**只有宝塔站点这一层 nginx**,SSE/长耗时配置只需配一处。
+
+> 关键:前端代码用相对路径 `/api/...` 调接口,没有可配后端地址的变量。所以前端站点**必须**反代 `/api` 到后端,做成同域;不能简单地把前后端放两个互不相干的域名。
+
+## 0. 宝塔装这些
+
+- **Node 版本管理器** → 安装 **Node 22**(`server/package.json` 要求 `>=22`;better-sqlite3 预编译二进制按 Node 大版本匹配,版本错会 ABI 报错)。
+- **PM2 管理器**(或用「Node 项目」功能,它底层就是 PM2)。
+- **Nginx**(建站用)。
+
+代码传到 `/www/wwwroot/resume-portal`(含 `server/` 和 `client/`)。
+
+## 1. 后端(PM2,端口 3001)
+
+```bash
+cd /www/wwwroot/resume-portal/server
+cp .env.example .env
+vi .env          # 必填 JWT_SECRET、DEEPSEEK_API_KEY;PORT 保持 3001
+
+# 用 Node 22 装依赖(better-sqlite3 会拉 linux-x64/node22 预编译二进制)
+npm install --omit=dev
+# 若 better-sqlite3 报需要编译:装工具链后重装
+#   Ubuntu: apt install -y python3 make g++   |  CentOS: yum install -y python3 make gcc-c++
+```
+
+启动(二选一):
+
+- **宝塔「Node 项目」**:添加项目 → 目录 `/www/wwwroot/resume-portal/server`,Node 版本 22,启动文件 `src/index.js`(或运行命令 `npm start`),端口 `3001`,开机自启 + 守护。
+- **命令行 PM2**:
+  ```bash
+  cd /www/wwwroot/resume-portal/server
+  pm2 start src/index.js --name resume-server
+  pm2 save && pm2 startup     # 按提示执行它输出的那条命令
+  ```
+
+验证:`curl http://127.0.0.1:3001/api/health` 返回 `{"ok":true,...}`。
+
+> **SQLite 权限**:`server/data.db`(含 `-wal`/`-shm`)由后端进程写。确保运行用户对 `server/` 可写:`chown -R www:www /www/wwwroot/resume-portal/server`。**重新部署别删 `data.db`**——用户/历史/项目全在里面;`.gitignore` 已忽略它,`git pull` 不会动它。
+
+## 2. 前端(构建 → 静态站点)
+
+```bash
+cd /www/wwwroot/resume-portal/client
+npm install                 # 需要 devDependencies(tsc/vite),别加 --omit=dev
+npm run build               # 产物在 client/dist
+# 小内存机器 tsc+vite 可能 OOM:先加 swap,或 NODE_OPTIONS=--max-old-space-size=1024 npm run build
+```
+
+> **「Node 项目」≠ 这个站点**:第 1 步建的 Node 项目只负责 PM2 跑后端(监听 3001),**反代不写在 Node 项目里**;它自动生成的 `listen 3001` 站点配置是死循环(nginx 代理给自己 + 抢端口),删掉/忽略。反代写在下面这个**独立的静态站点**上。
+>
+> **三个地方别搞混**:`伪静态` 只放 SPA 的 `try_files`;`/api` 反代写在 `配置文件`(或「反向代理」标签页,二选一,别同时);后端 Node 项目里啥代理都不配。
+
+宝塔 → 网站 → 添加站点:域名填你的域名或服务器 IP;PHP 版本选 **纯静态**;不建数据库。然后:
+
+1. **运行目录**:站点设置 → 网站目录 → 运行目录 指到 `/www/wwwroot/resume-portal/client/dist`。
+2. **伪静态**(站点设置 → 伪静态,清空后只粘这个 —— SPA 路由刷新不 404):
+   ```nginx
+   location / {
+       try_files $uri $uri/ /index.html;
+   }
+   ```
+3. **反代**(站点设置 → 配置文件,在 `server { }` 内、`access_log` 那行之前,加这段)。深度编排单次可达 1~2 分钟、`auto` 是 SSE 流式,默认 buffering+60s 会流式空白/502,所以必须关 buffering、调长超时:
+   ```nginx
+   location ^~ /api/ {
+       proxy_pass http://127.0.0.1:3001;
+       proxy_set_header Host $host;
+       proxy_set_header X-Real-IP $remote_addr;
+       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+
+       proxy_http_version 1.1;
+       proxy_set_header Connection '';
+       proxy_buffering off;
+       proxy_cache off;
+       proxy_read_timeout 600s;
+       proxy_send_timeout 600s;
+   }
+   ```
+   `^~ /api/` 比伪静态的 `location /` 更优先命中,接口不会被回退成 `index.html`。保存后宝塔自动 reload。
+   > 用「反向代理」标签页(代理目录 `/api`,目标 `http://127.0.0.1:3001`)也行,但宝塔生成的那段默认没关 buffering,还得再去改它生成的 conf 补上面那几行 —— 所以直接写「配置文件」更省事。两种方式**别同时用**(location 重复冲突)。
+4. 申请 SSL(Let's Encrypt)→ 强制 HTTPS。防火墙只放 80/443,**3001 不对外**(仅 `127.0.0.1`)。
+
+## 3. 更新流程
+
+```bash
+cd /www/wwwroot/resume-portal && git pull
+cd server  && npm install --omit=dev && pm2 restart resume-server
+cd ../client && npm install && npm run build      # dist 原地更新,站点自动生效
+```
+
+## 4. 排查
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 启动即崩,better-sqlite3 ABI/NODE_MODULE_VERSION 报错 | Node 不是 22。用宝塔 Node 版本管理器切 22,删 `server/node_modules` 重装。 |
+| 流式改写一直空白 / 深度编排 502 超时 | 反代没加 `proxy_buffering off` + 长 `proxy_read_timeout`(见 2.3)。 |
+| 刷新 `/result` 等路由 404 | 站点没配 SPA `try_files … /index.html`(见 2.2)。 |
+| 接口 404 / 跨域 | `/api` 反代没配或域名不同源。前端必须同域反代 `/api`(见开头)。 |
+| 写库失败 / 登录注册报错 | `server/` 目录运行用户无写权限,`chown -R www:www`。 |
+| 出站超时 | 服务器需能访问 `api.deepseek.com`(用 OpenRouter 时还有 `openrouter.ai`)。 |

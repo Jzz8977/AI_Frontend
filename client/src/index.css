@@ -146,3 +146,28 @@
     font-family: var(--font-sans);
   }
 }
+
+/* #6 在线简历编辑器 — 导出 PDF / 打印:只输出简历纸面,隐藏应用外壳 */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+  body {
+    background: #fff !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  /* 让预览容器在打印时铺满、不裁剪 */
+  .print-flush {
+    position: static !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+  .resume-paper {
+    box-shadow: none !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}

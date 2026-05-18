@@ -12,7 +12,8 @@ export type Stage =
   | "loading"
   | "result"
   | "history"
-  | "project";
+  | "project"
+  | "editor";
 
 export interface Usage {
   used: number;
@@ -170,6 +171,61 @@ export interface ProjectDetail {
     updatedAt: string;
   };
   runs: Run[];
+}
+
+// ---- #6 在线简历编辑器(magic-resume 风格,纯本地)----
+// 结构化简历文档:仅存浏览器 localStorage,绝不上传服务器。
+
+export type ResumeTemplateId = "classic" | "compact" | "timeline";
+
+export interface ResumeBasics {
+  name: string;
+  title: string; // 意向岗位
+  phone: string;
+  email: string;
+  city: string;
+  website: string;
+}
+
+export interface ResumeExperience {
+  id: string;
+  company: string;
+  role: string;
+  period: string;
+  bullets: string[];
+}
+
+export interface ResumeProject {
+  id: string;
+  name: string;
+  stack: string;
+  period: string;
+  bullets: string[];
+}
+
+export interface ResumeEducation {
+  id: string;
+  school: string;
+  major: string;
+  degree: string;
+  period: string;
+}
+
+export interface ResumeCustomSection {
+  id: string;
+  heading: string;
+  body: string;
+}
+
+export interface ResumeDoc {
+  basics: ResumeBasics;
+  summary: string;
+  skills: string;
+  experience: ResumeExperience[];
+  projects: ResumeProject[];
+  education: ResumeEducation[];
+  custom: ResumeCustomSection[];
+  template: ResumeTemplateId;
 }
 
 // API error shape
