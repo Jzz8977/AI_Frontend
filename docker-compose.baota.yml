@@ -1,0 +1,38 @@
+# 宝塔「Compose 模板」专用 — 模板功能不支持 build:,只能用预构建镜像。
+# 用法(在项目目录、宝塔「终端」里先构建并打 tag,只需一次/每次更新时):
+#   cd /www/wwwroot/resume-portal
+#   docker build -t resume-portal-server:latest ./server
+#   docker build -t resume-portal-client:latest ./client
+# 然后把本文件内容整段粘进宝塔 → Docker → Compose 模板(模板名别用已占用的 AI_Frontend)。
+version: "3.8"
+
+services:
+  server:
+    image: resume-portal-server:latest
+    environment:
+      # 模板目录下读不到 ./server/.env,所以这里直接写死(注意保密,别提交)。
+      JWT_SECRET: "改成你的强随机串"
+      DEEPSEEK_API_KEY: "你的 DeepSeek Key"
+      DEEPSEEK_MODEL: "deepseek-v4-flash"
+      OPENROUTER_API_KEY: ""
+      OPENROUTER_MODEL: "anthropic/claude-sonnet-4.5"
+      MAX_TOKENS: "8000"
+      DAILY_FREE_LIMIT: "5"
+      DB_PATH: "/data/data.db"
+      PORT: "3001"
+    volumes:
+      - rr-data:/data
+    expose:
+      - "3001"
+    restart: unless-stopped
+
+  client:
+    image: resume-portal-client:latest
+    ports:
+      - "8080:80"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  rr-data:
