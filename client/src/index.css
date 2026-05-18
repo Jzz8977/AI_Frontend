@@ -149,9 +149,12 @@
 
 /* #6 在线简历编辑器 — 导出 PDF / 打印:只输出简历纸面,隐藏应用外壳 */
 @media print {
+  /* margin:0 → 浏览器不再在页边打印 页眉/页脚(日期/网址/页码)。
+     纸面留白改由 .resume-paper 自己的 padding 承担。 */
   @page {
-    margin: 12mm;
+    margin: 0;
   }
+  html,
   body {
     background: #fff !important;
   }
@@ -168,6 +171,6 @@
     box-shadow: none !important;
     max-width: none !important;
     margin: 0 !important;
-    padding: 0 !important;
+    padding: 14mm 16mm !important;
   }
 }

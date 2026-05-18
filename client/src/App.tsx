@@ -201,6 +201,7 @@ export default function App() {
       setProjectId(res.projectId);
       setProjectTitle(res.projectTitle);
       setViewingRun(null);
+      setOriginal(""); // 提交成功即清空输入,避免原文残留(失败时保留以便重试)
     } catch (e) {
       const err = e as ApiError;
       if (err.status === 401) {
@@ -253,6 +254,7 @@ export default function App() {
           setStreaming(false);
           setInFlight(false);
           abortStream.current = null;
+          setOriginal(""); // 流式成功收尾即清空输入(失败/中断不清,便于重试)
         },
         onError: (err) => {
           setStreaming(false);
@@ -324,6 +326,7 @@ export default function App() {
           setOrchStreaming(false);
           setInFlight(false);
           abortStream.current = null;
+          setOriginal(""); // 编排成功收尾即清空输入(失败/中断不清,便于重试)
           toast.success(
             `编排完成 · 评分 ${info.score ?? "-"} · ${
               info.iterations?.length ?? 0
