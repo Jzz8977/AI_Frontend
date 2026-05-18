@@ -65,7 +65,7 @@ export function LoadingTerminal({ mode }: LoadingTerminalProps) {
         {allShown && (
           <div className="anim-fadeIn flex items-center gap-2 text-amber">
             <span className="text-text-muted">$</span>
-            <span>waiting for AI response</span>
+            <span>正在等待 AI 响应</span>
             <span className="anim-blink">_</span>
           </div>
         )}

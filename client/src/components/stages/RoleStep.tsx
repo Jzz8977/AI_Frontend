@@ -16,7 +16,7 @@ export function RoleStep({ mode, onSelect, onBack }: RoleStepProps) {
       <div className="mb-10 flex items-center justify-between">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[2px] text-text-muted">
-            // step 02 — select target role
+            // 步骤 02 — 选择目标岗位
           </p>
           <h1 className="mt-3 font-sans text-[40px] font-light tracking-[-1px] text-text">
             选择目标岗位

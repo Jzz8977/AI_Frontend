@@ -3,11 +3,11 @@ import { cn } from "@/lib/utils";
 import type { Stage, Usage } from "@/lib/types";
 
 const STEPS: { key: Stage; label: string }[] = [
-  { key: "mode", label: "MODE" },
-  { key: "role", label: "ROLE" },
-  { key: "input", label: "INPUT" },
-  { key: "loading", label: "RUN" },
-  { key: "result", label: "RESULT" },
+  { key: "mode", label: "模式" },
+  { key: "role", label: "岗位" },
+  { key: "input", label: "输入" },
+  { key: "loading", label: "生成" },
+  { key: "result", label: "结果" },
 ];
 
 interface TopBarProps {

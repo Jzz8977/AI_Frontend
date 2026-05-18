@@ -15,7 +15,7 @@ export function ErrorPanel({ error, onRetry, onBack }: ErrorPanelProps) {
         <div className="flex items-center gap-2.5 border-b border-border px-6 py-3">
           <Dot color="red" size={8} />
           <span className="font-mono text-[11px] uppercase tracking-[2px] text-red">
-            ERROR {error.status > 0 ? `· ${error.status}` : ""}
+            错误 {error.status > 0 ? `· ${error.status}` : ""}
           </span>
         </div>
         <div className="p-7">

@@ -62,7 +62,7 @@ export function AuthStep({ onAuthed }: AuthStepProps) {
           </span>
         </h1>
         <p className="mb-9 font-mono text-[11px] uppercase tracking-[1.5px] text-text-muted">
-          // sign in to continue
+          // 登录后开始使用
         </p>
 
         <div className="mb-px flex border border-border">

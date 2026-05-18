@@ -29,7 +29,7 @@ export const MODES: ModeDef[] = [
     id: "auto",
     code: "MODE_01",
     title: "快速重写",
-    subtitle: "// auto-rewrite",
+    subtitle: "// 快速重写一版",
     desc: "选岗位 / 粘原文 / AI 一键改写 / 双栏对比",
     eta: "~30s",
   },
@@ -37,7 +37,7 @@ export const MODES: ModeDef[] = [
     id: "review",
     code: "MODE_02",
     title: "精修诊断",
-    subtitle: "// diagnose & refine",
+    subtitle: "// 逐条诊断精修",
     desc: "AI 逐条分析问题 / 你决定接受或修改每条建议",
     eta: "~90s",
   },
@@ -57,7 +57,7 @@ export const ROLES: RoleDef[] = [
     id: "frontend",
     code: "FE",
     name: "前端工程师",
-    en: "Frontend Engineer",
+    en: "前端 · 交互 / 性能 / 工程化",
     desc: "深度交互 / 性能 / 工程化",
     tags: ["React 19", "Next.js 15", "TS", "Tailwind", "Motion", "WebGPU"],
   },
@@ -65,7 +65,7 @@ export const ROLES: RoleDef[] = [
     id: "fullstack",
     code: "FS",
     name: "全栈工程师",
-    en: "Full-Stack Engineer",
+    en: "全栈 · 端到端拥有感",
     desc: "端到端拥有感 / API / 数据库 / 部署",
     tags: ["Next.js RSC", "tRPC", "Postgres", "Drizzle", "Edge", "Vercel"],
   },
@@ -73,7 +73,7 @@ export const ROLES: RoleDef[] = [
     id: "ai",
     code: "AI",
     name: "AI 应用工程师",
-    en: "AI Application Engineer",
+    en: "AI 应用 · LLM / Agent / RAG",
     desc: "LLM 集成 / Agent / RAG / 流式 UI",
     tags: ["Vercel AI SDK", "LangGraph", "MCP", "RAG", "Tools", "Streaming"],
   },
@@ -95,19 +95,19 @@ export const SAMPLE_RESUME = `张三 / 5 年前端
 
 // r1.md §3.4 loading terminal lines
 export const LOADING_LINES_AUTO = [
-  "analyzing resume structure...",
-  "detecting 2026 stack opportunities...",
-  "injecting AI-related signals...",
-  "rewriting with quantified metrics...",
-  "generating diff report...",
+  "正在分析简历结构…",
+  "正在识别 2026 技术栈机会…",
+  "正在注入 AI 相关信号…",
+  "正在用量化指标重写…",
+  "正在生成对比报告…",
 ];
 
 export const LOADING_LINES_REVIEW = [
-  "scanning resume for issues...",
-  "matching against 2026 role spec...",
-  "identifying upgrade opportunities...",
-  "scoring each section...",
-  "compiling diagnostic report...",
+  "正在扫描简历问题…",
+  "正在对照 2026 岗位标准…",
+  "正在定位可升级点…",
+  "正在为各部分打分…",
+  "正在编译诊断报告…",
 ];
 
 export const MAX_INPUT = 8000;

@@ -18,6 +18,12 @@ const SEV_COLOR: Record<string, "red" | "amber" | "blue"> = {
   low: "blue",
 };
 
+const SEV_LABEL: Record<string, string> = {
+  high: "严重",
+  medium: "中等",
+  low: "轻微",
+};
+
 function scoreColor(score: number) {
   if (score >= 70) return "var(--green)";
   if (score >= 50) return "var(--amber)";
@@ -54,7 +60,7 @@ export function ReviewResult({
     const md = picked
       .map(
         (i, idx) =>
-          `## ${String(idx + 1).padStart(2, "0")} [${i.severity.toUpperCase()}] ${i.category}\n\n原文:\n> ${i.original}\n\n问题:${i.problem}\n\n建议改写为:\n${i.rewritten}\n`
+          `## ${String(idx + 1).padStart(2, "0")} [${SEV_LABEL[i.severity] ?? i.severity}] ${i.category}\n\n原文:\n> ${i.original}\n\n问题:${i.problem}\n\n建议改写为:\n${i.rewritten}\n`
       )
       .join("\n---\n\n");
     const blob = new Blob(
@@ -64,7 +70,7 @@ export function ReviewResult({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "resume-accepted-changes.md";
+    a.download = "已采纳改动.md";
     a.click();
     URL.revokeObjectURL(url);
     toast.success(`已导出 ${picked.length} 条改动`);
@@ -104,9 +110,9 @@ export function ReviewResult({
 
       {/* 统计行 */}
       <div className="mt-px flex items-center justify-between border border-t-0 border-border bg-panel px-7 py-3 font-mono text-[11px] uppercase tracking-[1.5px] text-text-dim">
-        <span>FOUND {data.issues.length} ISSUES</span>
+        <span>发现 {data.issues.length} 处问题</span>
         <span>
-          ACCEPTED <span className="text-green">{acceptedCount}</span> /{" "}
+          已采纳 <span className="text-green">{acceptedCount}</span> /{" "}
           {data.issues.length}
         </span>
       </div>
@@ -161,7 +167,7 @@ function IssueCard({
           <span className="font-mono text-xs text-text-dim">
             #{String(n).padStart(2, "0")}
           </span>
-          <Tag color={sev}>{issue.severity}</Tag>
+          <Tag color={sev}>{SEV_LABEL[issue.severity] ?? issue.severity}</Tag>
           <Tag color="dim">{issue.category}</Tag>
         </div>
         <Button
@@ -169,7 +175,7 @@ function IssueCard({
           size="sm"
           onClick={onToggle}
         >
-          {accepted ? "✓ ACCEPTED" : "ACCEPT"}
+          {accepted ? "✓ 已采纳" : "采纳"}
         </Button>
       </div>
 

@@ -4,6 +4,7 @@ import type {
   MeResponse,
   Mode,
   ModelId,
+  OrchestrateResponse,
   ProjectDetail,
   ProjectSummary,
   RewriteResponse,
@@ -152,6 +153,27 @@ export function rewrite(
       // Omit nulls so the server treats "no project" as "create new".
       ...(project?.projectId != null ? { projectId: project.projectId } : {}),
       ...(project?.projectTitle ? { projectTitle: project.projectTitle } : {}),
+    },
+  });
+}
+
+// ---- #1 深度编排 (非流式;改写→评估→没达目标不结束 循环) ----
+export function orchestrate(
+  role: RoleId,
+  original: string,
+  model: ModelId,
+  project?: { projectId?: number | null; projectTitle?: string | null },
+  targetScore?: number
+) {
+  return api<OrchestrateResponse>("/api/orchestrate", {
+    method: "POST",
+    body: {
+      role,
+      original,
+      model,
+      ...(project?.projectId != null ? { projectId: project.projectId } : {}),
+      ...(project?.projectTitle ? { projectTitle: project.projectTitle } : {}),
+      ...(targetScore != null ? { targetScore } : {}),
     },
   });
 }

@@ -21,6 +21,7 @@ import {
   getToken,
   me,
   rewrite,
+  orchestrate,
   streamRewrite,
   setUnauthorizedHandler,
 } from "@/lib/api";
@@ -29,6 +30,7 @@ import type {
   AutoResult as AutoResultData,
   AutoSegment,
   Mode,
+  OrchestrationIteration,
   ModelId,
   ProjectDetail,
   ReviewResult as ReviewData,
@@ -54,6 +56,12 @@ export default function App() {
   const [role, setRole] = useState<RoleId>("frontend");
   const [model] = useState<ModelId>(DEFAULT_MODEL);
   const [original, setOriginal] = useState("");
+  // #1 深度编排:auto 模式下开启 → 走 /api/orchestrate(改写→评估→没达目标不结束)。
+  const [deep, setDeep] = useState(false);
+  const [orch, setOrch] = useState<{
+    score: number;
+    iterations: OrchestrationIteration[];
+  } | null>(null);
   const [result, setResult] = useState<RewriteResult | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [inFlight, setInFlight] = useState(false);
@@ -98,7 +106,6 @@ export default function App() {
     setAuthed(false);
     setUser(null);
     setUsage(null);
-    setStage("mode");
     setResult(null);
     setError(null);
     setOriginal("");
@@ -202,6 +209,7 @@ export default function App() {
     stopStream();
     setError(null);
     setResult(null);
+    setOrch(null);
     setViewingRun(null);
     setStreamSummary("");
     setStreamSegments([]);
@@ -245,17 +253,65 @@ export default function App() {
     );
   }, [role, original, model, projectId, projectName, stopStream, navigate]);
 
+  // #1 深度编排:non-streamed; Mastra 在后端循环 改写→评估 直到达标/到上限。
+  const runOrchestrate = useCallback(async () => {
+    const now = Date.now();
+    if (now - lastSubmit.current < 1200) return;
+    lastSubmit.current = now;
+
+    stopStream();
+    setInFlight(true);
+    setError(null);
+    setResult(null);
+    setViewingRun(null);
+    setOrch(null);
+    navigate("/result");
+    const startedAt = Date.now();
+    try {
+      const res = await orchestrate(role, original, model, {
+        projectId,
+        projectTitle: projectId == null ? projectName : null,
+      });
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 1600) {
+        await new Promise((r) => setTimeout(r, 1600 - elapsed));
+      }
+      setResult(res.result);
+      setOrch({ score: res.score, iterations: res.iterations });
+      setUsage(res.usage);
+      setProjectId(res.projectId);
+      setProjectTitle(res.projectTitle);
+      setViewingRun(null);
+      toast.success(
+        `编排完成 · 评分 ${res.score} · ${res.iterations.length} 轮`
+      );
+    } catch (e) {
+      const err = e as ApiError;
+      if (err.status === 401) {
+        navigate("/input");
+        return;
+      }
+      if (err.status === 429 && err.usage) setUsage(err.usage);
+      setError(err);
+      navigate("/input");
+      toast.error(err.message);
+    } finally {
+      setInFlight(false);
+    }
+  }, [role, original, model, projectId, projectName, stopStream, navigate]);
+
   // Single entry point used by InputStep / retry.
   const onExecute = useCallback(() => {
-    if (mode === "auto") runStream();
+    if (mode === "auto") (deep ? runOrchestrate : runStream)();
     else runRewrite();
-  }, [mode, runStream, runRewrite]);
+  }, [mode, deep, runOrchestrate, runStream, runRewrite]);
 
   // "改写新简历(新建项目)" — drop project context, back to start.
   const newProject = useCallback(() => {
     stopStream();
     clearStream();
     setResult(null);
+    setOrch(null);
     setError(null);
     setOriginal("");
     resetProject();
@@ -360,7 +416,9 @@ export default function App() {
   const resultTitle = viewingRun
     ? `${projectTitle ?? "项目"} · v${viewingRun.version}`
     : mode === "auto"
-      ? "改写完成"
+      ? orch
+        ? `改写完成 · 评分 ${orch.score}(${orch.iterations.length} 轮编排)`
+        : "改写完成"
       : "诊断完成";
 
   // Each flow step is its own route; back buttons navigate routes too.
@@ -399,6 +457,8 @@ export default function App() {
       currentProjectTitle={projectId != null ? projectTitle : null}
       projectName={projectName}
       onProjectNameChange={setProjectName}
+      deep={deep}
+      onDeepChange={setDeep}
       onExecute={onExecute}
       onBack={() => navigate("/role")}
       inFlight={inFlight}
@@ -418,11 +478,19 @@ export default function App() {
   let resultStep: ReactNode;
   if (!hasResultContext) {
     resultStep = <Navigate to="/input" replace />;
+  } else if (mode === "auto" && inFlight && !result && !streaming) {
+    // #1 深度编排 in flight — non-streamed, so show the loading terminal
+    // until the (refined) result lands, same as review.
+    resultStep = (
+      <div className="flex min-h-[70vh] items-center justify-center px-8">
+        <LoadingTerminal mode="auto" />
+      </div>
+    );
   } else if (mode === "auto") {
     resultStep = (
       <AutoResult
         data={
-          viewingRun
+          viewingRun || (result && !streaming)
             ? (result as AutoResultData)
             : { summary: streamSummary, segments: streamSegments }
         }
@@ -494,6 +562,14 @@ export default function App() {
           <Route path="*" element={<Navigate to="/mode" replace />} />
         </Routes>
       </main>
+
+      <footer className="border-t border-border px-8 py-4">
+        <p className="mx-auto max-w-[1280px] font-mono text-[11px] leading-relaxed text-text-muted">
+          隐私说明：你的简历内容仅用于本工具生成改写结果,不对外共享、不用于训练;
+          生成的版本会存入你的账户历史以便复用,可在「历史」中一键删除。
+          在「简历模板」中补充的姓名 / 联系方式等仅保存在本地浏览器,不会上传服务器。
+        </p>
+      </footer>
 
       <SettingsDialog
         open={settingsOpen}

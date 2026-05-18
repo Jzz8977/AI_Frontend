@@ -11,6 +11,16 @@ import {
 } from "@/lib/api";
 import type { ProjectDetail, ProjectSummary, Run } from "@/lib/types";
 
+// 历史里展示的英文数据值 → 中文。
+const MODE_CN: Record<string, string> = { auto: "快速重写", review: "精修诊断" };
+const ROLE_CN: Record<string, string> = {
+  frontend: "前端",
+  fullstack: "全栈",
+  ai: "AI 应用",
+};
+const cn2 = (m: Record<string, string>, v?: string | null) =>
+  v ? m[v] ?? v : "";
+
 interface ProjectsViewProps {
   /** Open a past run on the result screen (App navigates to "/"). */
   onOpenRun: (run: Run, project: ProjectDetail["project"]) => void;
@@ -152,9 +162,9 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
                   v{r.version}
                 </span>
                 <Tag color={r.mode === "auto" ? "green" : "amber"}>
-                  {r.mode}
+                  {cn2(MODE_CN, r.mode)}
                 </Tag>
-                <Tag color="blue">{r.role}</Tag>
+                <Tag color="blue">{cn2(ROLE_CN, r.role)}</Tag>
                 {r.model && <Tag color="dim">{r.model}</Tag>}
               </div>
               <span className="font-mono text-[11px] text-text-muted">
@@ -206,8 +216,8 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
                 </div>
                 <div className="mt-1 font-mono text-[11px] text-text-muted">
                   更新于 {fmt(p.updatedAt)}
-                  {p.lastMode ? ` · ${p.lastMode}` : ""}
-                  {p.lastRole ? ` · ${p.lastRole}` : ""}
+                  {p.lastMode ? ` · ${cn2(MODE_CN, p.lastMode)}` : ""}
+                  {p.lastRole ? ` · ${cn2(ROLE_CN, p.lastRole)}` : ""}
                 </div>
               </button>
               <div className="flex shrink-0 gap-2">

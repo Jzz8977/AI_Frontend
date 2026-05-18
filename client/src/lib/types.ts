@@ -51,9 +51,35 @@ export interface AutoSegment {
   note: string;
 }
 
+// #2 知识点 — 仅深度编排结果包含;普通改写无此字段。
+export type KnowledgeLevel = "核心" | "进阶" | "加分";
+
+export interface KnowledgeTopic {
+  topic: string;
+  level: KnowledgeLevel;
+  points: string[];
+}
+
+// #3 学习路线思维导图(Excalidraw 风格)。
+export interface MindmapTopic {
+  title: string;
+  points: string[];
+}
+export interface MindmapPhase {
+  name: string;
+  duration: string;
+  topics: MindmapTopic[];
+}
+export interface Mindmap {
+  goal: string;
+  phases: MindmapPhase[];
+}
+
 export interface AutoResult {
   summary: string;
   segments: AutoSegment[];
+  knowledge?: KnowledgeTopic[];
+  mindmap?: Mindmap | null;
 }
 
 export type IssueSeverity = "high" | "medium" | "low";
@@ -86,6 +112,26 @@ export type RewriteResult = AutoResult | ReviewResult;
 
 export interface RewriteResponse {
   result: RewriteResult;
+  usage: Usage;
+  projectId: number | null;
+  projectTitle: string | null;
+  runId?: number;
+  version?: number;
+}
+
+// #1 工作流编排 — 改写→评估→没达目标不结束 的最终产物 + 迭代轨迹。
+export interface OrchestrationIteration {
+  attempt: number;
+  score: number;
+  feedback: string;
+}
+
+export interface OrchestrateResponse {
+  result: AutoResult;
+  score: number;
+  iterations: OrchestrationIteration[];
+  knowledge: KnowledgeTopic[];
+  mindmap: Mindmap | null;
   usage: Usage;
   projectId: number | null;
   projectTitle: string | null;

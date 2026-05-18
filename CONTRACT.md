@@ -71,6 +71,23 @@
   留空则自动按 `岗位 · 时间` 生成。仅**成功改写**才落库(与计数一致);落库失败不影响返回结果。
 - 返回额外带 `projectId`/`projectTitle`(命中或新建的项目)、`runId`/`version`(版本号,项目内 1 起递增)。
 
+## 深度编排 (#1 工作流编排, JWT, Bearer)
+
+| 方法 | 路径 | Body | 返回 |
+|---|---|---|---|
+| POST | `/api/orchestrate` | `{role, original, model?, projectId?, projectTitle?, targetScore?}` | `{ result, score, iterations, knowledge, mindmap, usage, projectId, projectTitle, runId?, version? }` |
+
+- **非流式**。后端用 **Mastra workflow**(`server/src/mastra/`)编排:`init → dountil(改写 → 评估) → finalize`。"没达目标不结束" = `dountil` 重复 [改写→评估] **直到** 评分 ≥ `targetScore` **或** 达到迭代上限 `ITER_CEILING=4`(硬上限,防止无限循环/无限烧 token)。重试时把上一轮评审意见 + 上一版草稿喂回改写 prompt(修订而非重写)。
+- 改写步骤复用**流式 NDJSON 协议**(`STREAM_*` prompt)但非流式收集,经 `makeJsonExtractor` 拼成与流式端点**完全一致**的 `{summary, segments}`,故结果可直接喂 AutoResult / 整理成稿 / 简历模板。
+- 模型路由、错误契约、限流、落库规则与 `/api/rewrite` **完全一致**:配额预检 + 仅成功才扣 + run 尽力落库(mode=`auto`)。pipeline 内任一步失败(模型/解析)→ `502 { error }`,**不计数**。
+- `targetScore`(可选,`[1,100]`,默认 85);`role`/`original`/`model`/`projectId`/`projectTitle` 校验同 `/api/rewrite`。
+- `score`=最终评分;`iterations`=`[{attempt,score,feedback}]` 迭代轨迹。
+- **#2 知识点**:精修循环后追加 `knowledge` 步骤,从最终改写稿提炼 `knowledge:[{topic, level:"核心"|"进阶"|"加分", points:string[]}]`(6~10 主题)。该步骤失败仅置空数组,不影响改写结果。`knowledge` **同时写入 run 的 `result_json`**(`result = {summary, segments, knowledge}`),故历史复用也带知识点。响应里 `knowledge` 与 `result.knowledge` 同值。
+- 前端:AutoResult 第 4 个 tab「知识点」按 level 着色(核心绿/进阶蓝/加分琥珀),「复制清单」导出 Markdown;非深度编排结果该 tab 显示提示文案。
+- **#3 学习路线思维导图**:knowledge 步骤后追加 `mindmap` 步骤,**始终强制走 DeepSeek**(忽略用户选的改写模型与自带 key,用服务端 `DEEPSEEK_API_KEY`)。基于 knowledge(空则回退 summary+segments)产出 `mindmap:{goal, phases:[{name, duration, topics:[{title, points:string[]}]}]}`(3~5 阶段递进)。失败置 `null`,不影响其余结果。`mindmap` 一并写入 `result_json`(`result = {summary, segments, knowledge, mindmap}`)。响应 `mindmap` 与 `result.mindmap` 同值。
+- 前端:AutoResult 第 5 个 tab「学习路线」以 Excalidraw 风格(粗描边+错位投影+轻微旋转)横向渲染 中心目标→阶段链→主题/要点,「复制路线」导出 Markdown;非深度编排结果显示提示文案。完整 Excalidraw 原生编辑/导出留作后续增强。
+- 前端:input 页 **auto 模式**有「深度编排」开关(`deep`),开启则 `onExecute` 走 `orchestrate()` 而非 `streamRewrite()`;`/result` 在编排进行中(`inFlight && !result && !streaming`)显示 LoadingTerminal,完成后复用 AutoResult,标题附「评分 N(M 轮编排)」。review 模式不显示该开关。
+
 ## 项目历史 (JWT, Bearer)
 
 | 方法 | 路径 | Body | 返回 |
@@ -89,7 +106,10 @@ react-router,**每一步独立路由**(未登录任意路径显示 auth):
 - `/result` 守卫:无流式/结果/历史上下文(如刷新冷启)时重定向 `/input`。review 等待响应时该路由内显示 loading 动画。
 - `/history` — 项目列表。`/history/:projectId` — 该项目版本列表(点版本 → 设状态并 `navigate("/result")` 只读复用)。
 - 其它路径重定向 `/mode`。TopBar 左上角 `前端方向部` 点击回 `/mode`;「历史」→ `/history`,据 `location` 高亮;步骤指示由 `location.pathname` 推导。
-- `auto` 结果页有「分段对比 / 整理成稿」切换:**整理成稿**把 summary + 各段 `rewritten` 拼成一篇分组(技能/工作经历/项目)Markdown,带「复制全文」按钮(`navigator.clipboard`),流式期间同步增量。
+- `auto` 结果页有「分段对比 / 整理成稿 / 简历模板」三切换:
+  - **整理成稿**把 summary + 各段 `rewritten` 拼成一篇分组(技能/工作经历/项目)Markdown,带「复制全文」按钮(`navigator.clipboard`),流式期间同步增量。
+  - **简历模板**:左侧用户补充姓名/意向岗位/电话/邮箱/城市/教育经历,右侧实时拼成可直接投递的完整简历 Markdown,「复制简历全文」「清空补充」。补充字段**仅存浏览器 `localStorage`(键 `resume_tpl_profile`),不上传服务器**;`logout` 不清它(属用户本地数据)。完整在线简历编辑器(参考 magic-resume)为待办 #6,后续单独交付。
+- 全局 footer 隐私说明(措辞须与实现一致,**不得**写"从不存储"):简历内容仅用于生成、不对外共享/不训练;生成版本入账户历史、可在「历史」一键删除;简历模板补充字段仅存本地浏览器。
 
 `auth(登录/注册) → mode → role → input → result`
 - `auto`:点 EXECUTE 直接进 `result`,流式逐段渲染**左右对比卡**(summary + 技能/每家公司/每个项目各一张),
@@ -109,3 +129,15 @@ react-router,**每一步独立路由**(未登录任意路径显示 auth):
 ## 联调
 
 根 `package.json` 提供 `npm run dev`(concurrently 同时起 server+client)、`npm run install:all`。
+
+## 部署 (#4 Docker)
+
+- `docker compose up -d --build` → client(nginx,宿主 `8080:80`)+ server(仅 `expose 3001`,经 nginx 反代)。详见 `DEPLOY.md`。
+- `server/Dockerfile`:`node:22-bookworm-slim`,**不装系统编译链**(better-sqlite3 用 linux-x64/node22 预编译二进制)。`db.js` 的 `DB_PATH` 可经 env 覆盖(默认 `server/data.db` 不变);compose 设 `DB_PATH=/data/data.db` 挂命名卷 `rr-data`,重启不丢数据(已验证)。
+- `client/Dockerfile` 多阶段(Vite build → nginx);`client/nginx.conf`:SPA `try_files /index.html`,`/api/` 反代 `server:3001` 且对 SSE/长耗时 orchestrate 关 buffering、`proxy_read_timeout 600s`。
+- `server/.env` 经 compose `env_file` 注入,不入镜像(`.dockerignore`)。
+
+## 文案 (#5 全中文)
+
+- 前端所有用户可见英文已转中文:步骤指示(模式/岗位/输入/生成/结果)、各步骤 `// 步骤 0X` 头、`执行中…/开始执行`、`改写前/改写后`、`AI 总评`、`生成中…`、loading 终端行、`错误`、review 的 `采纳/已采纳`、严重度(严重/中等/轻微)、历史里 mode/role 数据值(快速重写/精修诊断、前端/全栈/AI 应用)等。
+- 刻意保留:技术/品牌专有名词(React 19、Next.js、TS、MCP、RAG、Excalidraw、DeepSeek)、纯样式化代码标签(MODE_01 / FE / AI / r.code)、示例邮箱占位符。

@@ -21,6 +21,9 @@ interface InputStepProps {
   /** Optional name for the NEW project (only used when no current project). */
   projectName: string;
   onProjectNameChange: (v: string) => void;
+  /** #1 深度编排开关(仅 auto 模式生效)。 */
+  deep: boolean;
+  onDeepChange: (v: boolean) => void;
   onExecute: () => void;
   onBack: () => void;
   inFlight: boolean;
@@ -35,6 +38,8 @@ export function InputStep({
   currentProjectTitle,
   projectName,
   onProjectNameChange,
+  deep,
+  onDeepChange,
   onExecute,
   onBack,
   inFlight,
@@ -62,7 +67,7 @@ export function InputStep({
       <div className="mb-7 flex items-start justify-between">
         <div>
           <p className="font-mono text-[11px] uppercase tracking-[2px] text-text-muted">
-            // step 03 — paste your resume
+            // 步骤 03 — 粘贴简历原文
           </p>
           <h1 className="mt-3 font-sans text-[40px] font-light tracking-[-1px] text-text">
             粘贴简历原文
@@ -112,14 +117,14 @@ export function InputStep({
 
       <div className="border border-border bg-panel">
         <div className="flex items-center justify-between border-b border-border px-4 py-2.5 font-mono text-xs">
-          <span className="text-text-dim">resume.txt</span>
+          <span className="text-text-dim">简历原文.txt</span>
           <span
             className={cn(
               "tracking-wide",
               tooLong ? "text-red" : "text-text-muted"
             )}
           >
-            {len} chars
+            {len} 字
           </span>
         </div>
         <textarea
@@ -153,8 +158,31 @@ export function InputStep({
         </div>
         <div className="flex items-center gap-3">
           {/* model picker hidden — model fixed to DEFAULT_MODEL upstream */}
+          {mode === "auto" && (
+            <button
+              type="button"
+              onClick={() => onDeepChange(!deep)}
+              disabled={inFlight}
+              title="开启后由 AI 反复改写+自评,没达目标分不结束(约 1~3 轮,较慢)"
+              className={cn(
+                "flex items-center gap-2 border px-3 py-2 font-mono text-[11px] uppercase tracking-[1.5px] transition-colors",
+                "disabled:cursor-not-allowed disabled:opacity-50",
+                deep
+                  ? "border-green/50 bg-green/10 text-green"
+                  : "border-border bg-transparent text-text-dim hover:border-border-hi hover:text-text"
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-block h-2 w-2 rounded-full",
+                  deep ? "bg-green" : "bg-text-muted"
+                )}
+              />
+              深度编排
+            </button>
+          )}
           <Button onClick={handleExecute} disabled={disabled} size="lg">
-            {inFlight ? "EXECUTING…" : "EXECUTE →"}
+            {inFlight ? "执行中…" : "开始执行 →"}
           </Button>
         </div>
       </div>

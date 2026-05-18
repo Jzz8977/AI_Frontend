@@ -5,6 +5,7 @@ import cors from 'cors';
 
 import authRouter from './auth.js';
 import rewriteRouter from './rewrite.js';
+import orchestrateRouter from './orchestrate.js';
 import projectsRouter from './projects.js';
 import './db.js'; // ensures tables are created at boot
 
@@ -22,6 +23,7 @@ app.get('/api/health', (_req, res) => {
 // ---- Routes ----
 app.use('/api/auth', authRouter);
 app.use('/api/rewrite', rewriteRouter);
+app.use('/api/orchestrate', orchestrateRouter);
 app.use('/api/projects', projectsRouter);
 
 // ---- 404 fallback ----

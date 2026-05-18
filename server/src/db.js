@@ -5,8 +5,10 @@ import path from 'node:path';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// data.db lives at server/data.db (one level up from src/).
-const DB_PATH = path.join(__dirname, '..', 'data.db');
+// data.db lives at server/data.db (one level up from src/). In containers,
+// set DB_PATH to a volume-backed location (e.g. /data/data.db) so the
+// database + its WAL/SHM siblings survive restarts.
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'data.db');
 
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
