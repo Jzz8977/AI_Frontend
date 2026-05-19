@@ -43,6 +43,27 @@ export async function callJson({ prompt, system, model, apiKey }) {
  *
  * @returns {Promise<{summary:string, segments:Array}>}
  */
+const SEG_KINDS = new Set(['skills', 'experience', 'project']);
+
+/**
+ * Coerce a parsed `seg` frame into a contract-valid segment, or return null
+ * to DROP it. Models sometimes emit a terminator/noise frame shaped like a
+ * segment (e.g. `{"t":"seg","kind":"done"}`); letting that through crashes
+ * Mastra's strict zod enum on the next step. Missing kind → 'experience'.
+ */
+function toSegment(obj) {
+  const kind =
+    obj.kind == null ? 'experience' : String(obj.kind).trim().toLowerCase();
+  if (!SEG_KINDS.has(kind)) return null;
+  return {
+    kind,
+    title: obj.title ?? '',
+    original: obj.original ?? '',
+    rewritten: obj.rewritten ?? '',
+    note: obj.note ?? '',
+  };
+}
+
 export async function callSegments({ prompt, system, model, apiKey }) {
   const raw = await callRaw({ prompt, system, model, apiKey });
   const extract = makeJsonExtractor();
@@ -52,13 +73,8 @@ export async function callSegments({ prompt, system, model, apiKey }) {
     if (obj?.t === 'meta') {
       summary = typeof obj.summary === 'string' ? obj.summary : summary;
     } else if (obj?.t === 'seg') {
-      segments.push({
-        kind: obj.kind ?? 'experience',
-        title: obj.title ?? '',
-        original: obj.original ?? '',
-        rewritten: obj.rewritten ?? '',
-        note: obj.note ?? '',
-      });
+      const seg = toSegment(obj);
+      if (seg) segments.push(seg);
     }
   }
   return { summary, segments };
@@ -96,15 +112,11 @@ export async function callSegmentsStream(
         summary = typeof obj.summary === 'string' ? obj.summary : summary;
         onFrame?.({ t: 'meta', summary });
       } else if (obj?.t === 'seg') {
-        const seg = {
-          kind: obj.kind ?? 'experience',
-          title: obj.title ?? '',
-          original: obj.original ?? '',
-          rewritten: obj.rewritten ?? '',
-          note: obj.note ?? '',
-        };
-        segments.push(seg);
-        onFrame?.({ t: 'seg', ...seg });
+        const seg = toSegment(obj);
+        if (seg) {
+          segments.push(seg);
+          onFrame?.({ t: 'seg', ...seg });
+        }
       } else if (obj?.t === 'done') {
         break;
       }
