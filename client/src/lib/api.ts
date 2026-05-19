@@ -10,6 +10,9 @@ import type {
   OrchestrationIteration,
   ProjectDetail,
   ProjectSummary,
+  QbankCategoryGroup,
+  QbankMistakesResponse,
+  QbankStartResponse,
   RewriteResponse,
   RoleId,
   ShowcaseDetail,
@@ -511,4 +514,148 @@ export function publicShowcaseItem(id: number) {
   return api<{ item: ShowcaseDetail }>(`/api/public/showcase/${id}`, {
     auth: false,
   });
+}
+
+// ---- 题库 AI(面试练习,经主后端代理;userId 由后端按登录态注入)----
+
+export function qbankCategories() {
+  return api<{ categories: QbankCategoryGroup[] }>("/api/qbank/categories");
+}
+
+export function qbankStart(category: string, count?: number) {
+  return api<QbankStartResponse>("/api/qbank/interview/start", {
+    method: "POST",
+    body: { category, ...(count != null ? { count } : {}) },
+  });
+}
+
+export function qbankMistakes(
+  category?: string,
+  limit?: number,
+  offset?: number
+) {
+  const q = new URLSearchParams();
+  if (category) q.set("category", category);
+  if (limit != null) q.set("limit", String(limit));
+  if (offset != null) q.set("offset", String(offset));
+  const qs = q.toString();
+  return api<QbankMistakesResponse>(
+    `/api/qbank/mistakes${qs ? `?${qs}` : ""}`
+  );
+}
+
+export interface QbankAnswerHandlers {
+  /** 评判开始,告知检索到 N 条相关知识。 */
+  onMeta?: (info: { questionId: string; retrievedCount: number }) => void;
+  /** 流式反馈文本片段(按序拼接为 Markdown)。 */
+  onChunk: (text: string) => void;
+  /** 评判结束:是否答错 + 相关题 id。 */
+  onDone: (info: {
+    isWrong: boolean;
+    relatedQuestionIds: string[];
+  }) => void;
+  onError: (err: ApiError) => void;
+}
+
+/**
+ * POST /api/qbank/interview/answer/stream — 命名事件 SSE
+ * (event: meta|chunk|done|error)。返回 abort fn。流前的校验错误以普通
+ * JSON(400/404/502)经 onError 返回。
+ */
+export function qbankAnswerStream(
+  params: { sessionId: string; questionId: string; userAnswer: string },
+  h: QbankAnswerHandlers
+): () => void {
+  const ctrl = new AbortController();
+  const token = getToken();
+
+  (async () => {
+    let res: Response;
+    try {
+      res = await fetch("/api/qbank/interview/answer/stream", {
+        method: "POST",
+        signal: ctrl.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(params),
+      });
+    } catch {
+      h.onError({ status: 0, message: "网络错误,无法连接到服务器。" });
+      return;
+    }
+
+    const ctype = res.headers.get("content-type") || "";
+    if (!res.ok || !res.body || !ctype.includes("text/event-stream")) {
+      const d = (await res.json().catch(() => ({}))) as Record<
+        string,
+        unknown
+      >;
+      if (res.status === 401) {
+        clearToken();
+        onUnauthorized?.();
+      }
+      h.onError({
+        status: res.status || 502,
+        message:
+          (d.message as string) ||
+          (d.error as string) ||
+          "题库服务请求失败",
+      });
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let sep: number;
+        while ((sep = buf.indexOf("\n\n")) >= 0) {
+          const frame = buf.slice(0, sep);
+          buf = buf.slice(sep + 2);
+          let evt = "message";
+          const dataLines: string[] = [];
+          for (const line of frame.split("\n")) {
+            if (line.startsWith("event:")) evt = line.slice(6).trim();
+            else if (line.startsWith("data:")) dataLines.push(line.slice(5));
+          }
+          if (!dataLines.length) continue;
+          let payload: Record<string, unknown>;
+          try {
+            payload = JSON.parse(dataLines.join("\n").trim());
+          } catch {
+            continue;
+          }
+          if (evt === "meta")
+            h.onMeta?.({
+              questionId: (payload.questionId as string) ?? "",
+              retrievedCount: (payload.retrievedCount as number) ?? 0,
+            });
+          else if (evt === "chunk")
+            h.onChunk((payload.text as string) ?? "");
+          else if (evt === "done")
+            h.onDone({
+              isWrong: Boolean(payload.isWrong),
+              relatedQuestionIds:
+                (payload.relatedQuestionIds as string[]) ?? [],
+            });
+          else if (evt === "error")
+            h.onError({
+              status: 502,
+              message: (payload.message as string) || "评判失败",
+            });
+        }
+      }
+    } catch {
+      if (!ctrl.signal.aborted)
+        h.onError({ status: 0, message: "评判连接中断,请重试。" });
+    }
+  })();
+
+  return () => ctrl.abort();
 }

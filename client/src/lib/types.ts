@@ -259,6 +259,40 @@ export interface ShowcaseDetail {
   result: RewriteResult;
 }
 
+// ---- 题库 AI(面试题练习,经主后端代理 /api/qbank)----
+
+export interface QbankCategoryItem {
+  key: string;
+  name: string;
+  count: number;
+}
+export interface QbankCategoryGroup {
+  direction: "backend" | "frontend" | string;
+  items: QbankCategoryItem[];
+}
+export interface QbankQuestion {
+  id: string;
+  title: string;
+  questionType: "concept" | "sql" | string;
+  questionText: string;
+}
+export interface QbankStartResponse {
+  sessionId: string;
+  questions: QbankQuestion[];
+}
+export interface QbankMistake {
+  questionId: string;
+  title: string;
+  category: string;
+  userAnswer: string;
+  feedback: string;
+  answeredAt: number;
+}
+export interface QbankMistakesResponse {
+  total: number;
+  items: QbankMistake[];
+}
+
 // API error shape
 export interface ApiError {
   status: number;

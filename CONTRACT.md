@@ -121,6 +121,20 @@
 - **隐私铁律**:公开端点只回**改写结果**(`result`=summary/segments/knowledge/mindmap 或 review 结构),**绝不**含 `original` 原始简历、作者邮箱/`user_id`。`teaser` 取 `summary`(无则 `verdict`)前 160 字。
 - 取消分享后 `/showcase/:id` 立即 404(与"不存在"同义,不泄漏曾分享过)。
 
+## 题库 AI 面试助手 (JWT, Bearer — 主后端代理内网题库服务)
+
+外部「题库 AI 服务」(见 `API.md`)是**内网 server→server** 服务、自身不鉴权。主后端 `server/src/qbank.js`(挂 `/api/qbank`,全 `requireAuth`)做受信代理:**前端绝不直连**,`userId` 由后端按已验证登录态注入 `u_<user.id>`(忽略前端传入的任何 userId);上游地址 `QBANK_URL`(env,默认 `http://127.0.0.1:3002`)。
+
+| 方法 | 路径 | 代理到 | 说明 |
+|---|---|---|---|
+| GET | `/api/qbank/categories` | `GET /api/categories` | 分类(按 direction 分组) |
+| POST | `/api/qbank/interview/start` | `POST /api/interview/start` | body `{category,count?}`;注入 `userId` |
+| POST | `/api/qbank/interview/answer/stream` | `POST /api/interview/answer/stream` | **SSE 命名事件**(`meta`/`chunk`/`done`/`error`)**边读边写透传**,客户端断开 `AbortController` 掐上游;流前校验错误以普通 JSON 透传 |
+| GET | `/api/qbank/mistakes` | `GET /api/mistakes` | query `{category?,limit?,offset?}`;注入 `userId` |
+
+- 上游不可达 → `502 {error:"qbank_unreachable", message}`(不泄漏内网细节);上游错误体按原 status 透传。
+- 前端:`InterviewChat`(`components/InterviewChat.tsx`)= **毛玻璃悬浮弹层**(右下角圆形 launcher → `fixed z-[60]` 背板模糊 + `backdrop-blur-2xl` 半透明面板),登录后任意应用页可用(`showAppChrome` 时挂载,Landing/Showcase/Auth 不挂)。流程:选分类(+题量 5/10/15/20)→ 逐题 chat 作答 → SSE 流式 Markdown 点评(内置极简 md 渲染:标题/粗体/代码/列表)→ 下一题 → 完成;另有「错题本」视图。`api.ts`:`qbankCategories/qbankStart/qbankMistakes/qbankAnswerStream`(命名事件 SSE 解析)。
+
 ## 前端路由 + 阶段机
 
 react-router。**免登录可浏览**:`/`(Landing)、`/showcase/:id`、`/auth`,**外加 `/mode` `/role`**(选模式/选岗位允许游客探索)。**登录墙在 `/input`**:`/input /result /history /editor` 未登录经 `guard()` 重定向 `/auth` 并带 `state.from=当前路径`;登录成功 `onAuthed` 读 `location.state.from` 回到原目标(无则 `/mode`);`/auth` 已登录则重定向 `/mode`。**Bare 页(`/ /showcase /auth`)无应用外壳**;`/mode /role` 登录后仍有外壳(`showAppChrome = authed && !isBareRoute`)。catch-all → 已登录 `/mode`、未登录 `/`。Landing「立即改写」/「我也要改写」→ `/mode`(进流程,墙在 input);右上「登录/注册」→ `/auth`。

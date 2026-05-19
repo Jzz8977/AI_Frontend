@@ -18,6 +18,7 @@ import { ProjectsView } from "@/components/stages/ProjectsView";
 import { ResumeEditor } from "@/components/stages/ResumeEditor";
 import { ErrorPanel } from "@/components/stages/ErrorPanel";
 import { SettingsDialog } from "@/components/SettingsDialog";
+import { InterviewChat } from "@/components/InterviewChat";
 import { RESUME_SEED_KEY, docFromAutoResult } from "@/lib/resume-doc";
 
 import {
@@ -742,6 +743,9 @@ export default function App() {
           loadMe().catch(() => {});
         }}
       />
+
+      {/* 面试题库助手 — 毛玻璃悬浮弹层,所有页面都展示(未登录则引导登录) */}
+      <InterviewChat authed={authed} />
     </div>
   );
 }

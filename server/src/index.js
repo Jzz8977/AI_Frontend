@@ -8,6 +8,7 @@ import rewriteRouter from './rewrite.js';
 import orchestrateRouter from './orchestrate.js';
 import projectsRouter from './projects.js';
 import publicRouter from './public.js';
+import qbankRouter from './qbank.js';
 import './db.js'; // ensures tables are created at boot
 
 const app = express();
@@ -27,6 +28,7 @@ app.use('/api/rewrite', rewriteRouter);
 app.use('/api/orchestrate', orchestrateRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/public', publicRouter);
+app.use('/api/qbank', qbankRouter);
 
 // ---- 404 fallback ----
 app.use((req, res) => {
