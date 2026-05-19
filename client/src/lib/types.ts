@@ -160,6 +160,8 @@ export interface Run {
   model: ModelId | null;
   original: string;
   result: RewriteResult | null;
+  /** 是否已公开到展示墙(opt-in,可随时取消)。 */
+  shared: boolean;
   createdAt: string;
 }
 
@@ -226,6 +228,35 @@ export interface ResumeDoc {
   education: ResumeEducation[];
   custom: ResumeCustomSection[];
   template: ResumeTemplateId;
+  /** 时间线模板的主题强调色(hex,如 "#2563eb")。其它模板也复用其标题装饰。 */
+  accent: string;
+}
+
+// ---- 公开展示墙(分享的版本,免登录可看)----
+
+export interface ShowcaseItem {
+  id: number;
+  title: string;
+  role: RoleId | string;
+  roleLabel: string;
+  mode: Mode | string;
+  modeLabel: string;
+  teaser: string;
+  segCount: number;
+  hasKnowledge: boolean;
+  hasMindmap: boolean;
+  createdAt: string;
+}
+
+export interface ShowcaseDetail {
+  id: number;
+  title: string;
+  role: RoleId | string;
+  roleLabel: string;
+  mode: Mode | string;
+  modeLabel: string;
+  createdAt: string;
+  result: RewriteResult;
 }
 
 // API error shape

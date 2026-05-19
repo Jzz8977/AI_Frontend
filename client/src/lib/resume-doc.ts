@@ -35,8 +35,27 @@ export function defaultDoc(): ResumeDoc {
     projects: [emptyProject()],
     education: [{ id: rid(), school: "", major: "", degree: "", period: "" }],
     custom: [],
-    template: "classic",
+    template: "compact", // 默认紧凑型
+    accent: DEFAULT_ACCENT,
   };
+}
+
+/** 默认强调色 + 时间线可选配色板。 */
+export const DEFAULT_ACCENT = "#2563eb";
+export const ACCENT_PRESETS = [
+  "#2563eb", // 蓝
+  "#0f766e", // 青绿
+  "#7c3aed", // 紫
+  "#db2777", // 玫红
+  "#ea580c", // 橙
+  "#16a34a", // 绿
+  "#475569", // 石墨
+  "#dc2626", // 红
+];
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+function normAccent(v: unknown): string {
+  return typeof v === "string" && HEX_RE.test(v) ? v : DEFAULT_ACCENT;
 }
 
 const TEMPLATES: ResumeDoc["template"][] = ["classic", "compact", "timeline"];
@@ -99,7 +118,8 @@ export function normalizeDoc(input: unknown): ResumeDoc {
       : [],
     template: TEMPLATES.includes(o.template as ResumeDoc["template"])
       ? (o.template as ResumeDoc["template"])
-      : "classic",
+      : "compact",
+    accent: normAccent(o.accent),
   };
 }
 

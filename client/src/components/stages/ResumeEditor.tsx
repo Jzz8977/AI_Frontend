@@ -12,6 +12,7 @@ import type {
   ResumeTemplateId,
 } from "@/lib/types";
 import {
+  ACCENT_PRESETS,
   RESUME_SEED_KEY,
   defaultDoc,
   docToMarkdown,
@@ -193,18 +194,24 @@ function PreviewContact({ doc }: { doc: ResumeDoc }) {
 function PreviewHeading({
   children,
   template,
+  accent,
 }: {
   children: React.ReactNode;
   template: ResumeTemplateId;
+  accent: string;
 }) {
+  const timeline = template === "timeline";
   return (
     <h2
       className={cn(
-        "mt-5 mb-2 text-[14px] font-semibold tracking-wide text-[#1a1a1a]",
-        template === "timeline"
-          ? "border-l-4 border-[#2563eb] pl-2"
-          : "border-b border-[#d4d4d4] pb-1"
+        "mt-5 mb-2 text-[14px] font-semibold tracking-wide",
+        timeline ? "border-l-4 pl-2" : "border-b border-[#d4d4d4] pb-1"
       )}
+      style={
+        timeline
+          ? { borderColor: accent, color: accent }
+          : { color: "#1a1a1a" }
+      }
     >
       {children}
     </h2>
@@ -226,6 +233,7 @@ function Bullets({ items }: { items: string[] }) {
 function ResumePreview({ doc }: { doc: ResumeDoc }) {
   const t = doc.template;
   const compact = t === "compact";
+  const accent = doc.accent;
   const b = doc.basics;
   const exps = doc.experience.filter(
     (e) => e.company.trim() || e.bullets.some((x) => x.trim())
@@ -268,9 +276,10 @@ function ResumePreview({ doc }: { doc: ResumeDoc }) {
       ) : (
         <>
           <header
-            className={cn(
-              t === "timeline" && "border-b-2 border-[#2563eb] pb-3"
-            )}
+            className={cn(t === "timeline" && "border-b-2 pb-3")}
+            style={
+              t === "timeline" ? { borderColor: accent } : undefined
+            }
           >
             <h1 className="text-[26px] font-bold leading-tight text-[#111]">
               {b.name || "你的姓名"}
@@ -280,7 +289,7 @@ function ResumePreview({ doc }: { doc: ResumeDoc }) {
 
           {doc.summary.trim() && (
             <>
-              <PreviewHeading template={t}>个人简介</PreviewHeading>
+              <PreviewHeading template={t} accent={accent}>个人简介</PreviewHeading>
               <p className="whitespace-pre-line text-[12.5px] leading-[1.7] text-[#333]">
                 {doc.summary.trim()}
               </p>
@@ -289,7 +298,7 @@ function ResumePreview({ doc }: { doc: ResumeDoc }) {
 
           {doc.skills.trim() && (
             <>
-              <PreviewHeading template={t}>技能</PreviewHeading>
+              <PreviewHeading template={t} accent={accent}>技能</PreviewHeading>
               <p className="whitespace-pre-line text-[12.5px] leading-[1.7] text-[#333]">
                 {doc.skills.trim()}
               </p>
@@ -298,7 +307,7 @@ function ResumePreview({ doc }: { doc: ResumeDoc }) {
 
           {exps.length > 0 && (
             <>
-              <PreviewHeading template={t}>工作经历</PreviewHeading>
+              <PreviewHeading template={t} accent={accent}>工作经历</PreviewHeading>
               <div className={compact ? "space-y-2" : "space-y-3.5"}>
                 {exps.map((e) => (
                   <div key={e.id}>
@@ -312,7 +321,7 @@ function ResumePreview({ doc }: { doc: ResumeDoc }) {
 
           {projs.length > 0 && (
             <>
-              <PreviewHeading template={t}>项目经历</PreviewHeading>
+              <PreviewHeading template={t} accent={accent}>项目经历</PreviewHeading>
               <div className={compact ? "space-y-2" : "space-y-3.5"}>
                 {projs.map((p) => (
                   <div key={p.id}>
@@ -326,7 +335,7 @@ function ResumePreview({ doc }: { doc: ResumeDoc }) {
 
           {edus.length > 0 && (
             <>
-              <PreviewHeading template={t}>教育经历</PreviewHeading>
+              <PreviewHeading template={t} accent={accent}>教育经历</PreviewHeading>
               <ul className="space-y-1 text-[12.5px] leading-[1.6] text-[#333]">
                 {edus.map((e) => (
                   <li key={e.id} className="flex justify-between gap-3">
@@ -348,7 +357,7 @@ function ResumePreview({ doc }: { doc: ResumeDoc }) {
             (c) =>
               (c.heading.trim() || c.body.trim()) && (
                 <div key={c.id}>
-                  <PreviewHeading template={t}>
+                  <PreviewHeading template={t} accent={accent}>
                     {c.heading.trim() || "其他"}
                   </PreviewHeading>
                   <p className="whitespace-pre-line text-[12.5px] leading-[1.7] text-[#333]">
@@ -523,6 +532,47 @@ export function ResumeEditor({ onBack }: { onBack: () => void }) {
                 {tpl.label}
               </button>
             ))}
+          </div>
+
+          {/* 强调色 — 时间线模板的描边/标题配色(变色功能) */}
+          <div className="flex flex-wrap items-center gap-3 border border-border bg-panel px-4 py-3">
+            <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-text-dim">
+              强调色
+              {doc.template !== "timeline" && (
+                <span className="ml-1 normal-case text-text-muted">
+                  (时间线模板生效)
+                </span>
+              )}
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {ACCENT_PRESETS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => patch({ accent: c })}
+                  title={c}
+                  aria-label={`选择 ${c}`}
+                  className={cn(
+                    "h-6 w-6 border transition-transform hover:scale-110",
+                    doc.accent === c
+                      ? "border-text ring-1 ring-green"
+                      : "border-border"
+                  )}
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+              <label
+                className="ml-1 flex h-6 cursor-pointer items-center gap-1 border border-border px-2 font-mono text-[10px] text-text-dim hover:text-text"
+                title="自定义颜色"
+              >
+                自定义
+                <input
+                  type="color"
+                  value={doc.accent}
+                  onChange={(e) => patch({ accent: e.target.value })}
+                  className="h-4 w-5 cursor-pointer border-0 bg-transparent p-0"
+                />
+              </label>
+            </div>
           </div>
 
           <SectionShell title="基本信息">

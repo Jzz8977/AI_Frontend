@@ -6,6 +6,8 @@ import { toast } from "sonner";
 import { TopBar } from "@/components/ui/top-bar";
 import { Button } from "@/components/ui/button";
 import { AuthStep } from "@/components/stages/AuthStep";
+import { Landing } from "@/components/stages/Landing";
+import { Showcase } from "@/components/stages/Showcase";
 import { ModeStep } from "@/components/stages/ModeStep";
 import { RoleStep } from "@/components/stages/RoleStep";
 import { InputStep } from "@/components/stages/InputStep";
@@ -164,16 +166,20 @@ export default function App() {
   const onAuthed = useCallback(async () => {
     try {
       await loadMe();
-      navigate("/mode");
+      // Resume where the visitor was headed before the login wall (e.g.
+      // they picked mode+role then hit /input). Falls back to /input so
+      // a fresh login lands straight in the flow.
+      const from = (location.state as { from?: string } | null)?.from;
+      navigate(from && from !== "/auth" ? from : "/mode");
     } catch (e) {
       toast.error((e as ApiError).message || "加载用户信息失败");
     }
-  }, [loadMe, navigate]);
+  }, [loadMe, navigate, location.state]);
 
   // logo「前端方向部」→ 回到创建流程第一步
   const goHome = useCallback(() => {
     setError(null);
-    navigate("/mode");
+    navigate("/");
   }, [navigate]);
 
   const runRewrite = useCallback(async () => {
@@ -308,6 +314,12 @@ export default function App() {
         onIter: (info) => setOrchProgress(info),
         onMeta: (summary) => setStreamSummary(summary),
         onSegment: (seg) => setStreamSegments((p) => [...p, seg]),
+        // 精修循环把首版打磨得更好 → 整体替换为改进版(用户先看到首版,
+        // 后台精修完成后无缝换成更优的)。
+        onRevise: (info) => {
+          setStreamSummary(info.summary);
+          setStreamSegments(info.segments);
+        },
         // 分段全部到位:结束「流式」态(分段对比/整理成稿/简历模板 完成、
         // 动作按钮可用),仅保留 orchStreaming → 知识点/学习路线 tab 显示生成中。
         onSegDone: () => setStreaming(false),
@@ -447,9 +459,23 @@ export default function App() {
     );
   }
 
-  if (!authed) {
-    return <AuthStep onAuthed={onAuthed} />;
-  }
+  // Public (no-login) routes: landing + showcase + the auth page itself.
+  const path = location.pathname;
+  // "Bare" pages render with NO app chrome (their own header/footer):
+  // landing, showcase, auth. /mode + /role are browsable without login but
+  // still use the app chrome WHEN logged in.
+  const isBareRoute =
+    path === "/" || path.startsWith("/showcase") || path === "/auth";
+  // No-login zone: bare pages + 选模式/选岗位 so visitors can explore;
+  // login is only required to proceed into /input and beyond.
+  // Protected app routes redirect to /auth until logged in, remembering
+  // where the visitor was headed so we can resume after login.
+  const guard = (node: ReactNode): ReactNode =>
+    authed ? (
+      node
+    ) : (
+      <Navigate to="/auth" replace state={{ from: path }} />
+    );
 
   // Result-screen action buttons differ for a fresh rewrite vs. history view.
   const editorAction = mode === "auto" && (
@@ -627,56 +653,85 @@ export default function App() {
           : "result"
         : "mode";
 
+  const showAppChrome = authed && !isBareRoute;
+
   return (
     <div className="min-h-screen bg-bg">
-      <TopBar
-        stage={pathStage}
-        usage={usage}
-        email={user?.email}
-        historyActive={location.pathname.startsWith("/history")}
-        editorActive={location.pathname.startsWith("/editor")}
-        onHome={goHome}
-        onHistory={() => navigate("/history")}
-        onEditor={() => navigate("/editor")}
-        onSettings={() => setSettingsOpen(true)}
-        onLogout={logout}
-      />
+      {showAppChrome && (
+        <TopBar
+          stage={pathStage}
+          usage={usage}
+          email={user?.email}
+          historyActive={location.pathname.startsWith("/history")}
+          editorActive={location.pathname.startsWith("/editor")}
+          onHome={goHome}
+          onHistory={() => navigate("/history")}
+          onEditor={() => navigate("/editor")}
+          onShowcase={() => navigate("/")}
+          onSettings={() => setSettingsOpen(true)}
+          onLogout={logout}
+        />
+      )}
 
       <main>
         <Routes>
-          <Route path="/" element={<Navigate to="/mode" replace />} />
+          {/* ---- public (no login) ---- */}
+          <Route path="/" element={<Landing authed={authed} />} />
+          <Route
+            path="/showcase/:id"
+            element={<Showcase authed={authed} />}
+          />
+          <Route
+            path="/auth"
+            element={
+              authed ? (
+                <Navigate to="/mode" replace />
+              ) : (
+                <AuthStep onAuthed={onAuthed} />
+              )
+            }
+          />
+
+          {/* ---- protected app (redirect to /auth until logged in) ---- */}
+          {/* 选模式 / 选岗位 — 免登录可浏览 */}
           <Route path="/mode" element={modeStep} />
           <Route path="/role" element={roleStep} />
-          <Route path="/input" element={inputStep} />
-          <Route path="/result" element={resultStep} />
+          <Route path="/input" element={guard(inputStep)} />
+          <Route path="/result" element={guard(resultStep)} />
           <Route
             path="/history"
-            element={
+            element={guard(
               <ProjectsView onOpenRun={openRun} onContinue={continueProject} />
-            }
+            )}
           />
           <Route
             path="/history/:projectId"
-            element={
+            element={guard(
               <ProjectsView onOpenRun={openRun} onContinue={continueProject} />
-            }
+            )}
           />
           <Route
             path="/editor"
-            element={<ResumeEditor onBack={() => navigate(-1)} />}
+            element={guard(<ResumeEditor onBack={() => navigate(-1)} />)}
           />
-          <Route path="*" element={<Navigate to="/mode" replace />} />
+          <Route
+            path="*"
+            element={<Navigate to={authed ? "/mode" : "/"} replace />}
+          />
         </Routes>
       </main>
 
-      <footer className="no-print border-t border-border px-8 py-4">
-        <p className="mx-auto max-w-[1280px] font-mono text-[11px] leading-relaxed text-text-muted">
-          隐私说明：你的简历内容仅用于本工具生成改写结果,不对外共享、不用于训练;
-          生成的版本会存入你的账户历史以便复用,可在「历史」中一键删除。
-          在「简历模板」补充的姓名 / 联系方式,以及「在线简历编辑器」中编辑的整份简历,
-          仅保存在本地浏览器,不会上传服务器,清除浏览器数据即丢失。
-        </p>
-      </footer>
+      {showAppChrome && (
+        <footer className="no-print border-t border-border px-8 py-4">
+          <p className="mx-auto max-w-[1280px] font-mono text-[11px] leading-relaxed text-text-muted">
+            隐私说明：你的简历内容仅用于本工具生成改写结果,不对外共享、不用于训练;
+            生成的版本会存入你的账户历史以便复用,可在「历史」中一键删除。
+            「展示墙」只展示你**主动设为公开**的改写结果(可随时取消),不含原始简历与身份。
+            在「简历模板」补充的姓名 / 联系方式,以及「在线简历编辑器」中编辑的整份简历,
+            仅保存在本地浏览器,不会上传服务器,清除浏览器数据即丢失。
+          </p>
+        </footer>
+      )}
 
       <SettingsDialog
         open={settingsOpen}

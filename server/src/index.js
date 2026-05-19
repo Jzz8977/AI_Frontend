@@ -7,6 +7,7 @@ import authRouter from './auth.js';
 import rewriteRouter from './rewrite.js';
 import orchestrateRouter from './orchestrate.js';
 import projectsRouter from './projects.js';
+import publicRouter from './public.js';
 import './db.js'; // ensures tables are created at boot
 
 const app = express();
@@ -25,6 +26,7 @@ app.use('/api/auth', authRouter);
 app.use('/api/rewrite', rewriteRouter);
 app.use('/api/orchestrate', orchestrateRouter);
 app.use('/api/projects', projectsRouter);
+app.use('/api/public', publicRouter);
 
 // ---- 404 fallback ----
 app.use((req, res) => {

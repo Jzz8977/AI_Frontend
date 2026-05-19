@@ -12,7 +12,7 @@ import {
   STREAM_USER_PROMPT,
   ROLE_LABEL,
 } from '../prompts.js';
-import { callJson, callSegments } from './runner.js';
+import { callJson, callSegments, callSegmentsStream } from './runner.js';
 
 const segmentSchema = z.object({
   kind: z.enum(['skills', 'experience', 'project']),
@@ -105,7 +105,7 @@ const rewriteStep = createStep({
   id: 'rewrite',
   inputSchema: stateSchema,
   outputSchema: stateSchema,
-  execute: async ({ inputData: s }) => {
+  execute: async ({ inputData: s, requestContext, abortSignal }) => {
     let prompt = STREAM_USER_PROMPT(s.original, s.role);
     // On a retry, hand the evaluator's critique + the prior draft back to the
     // model so it revises instead of regenerating blindly.
@@ -115,12 +115,32 @@ const rewriteStep = createStep({
         `\n\n## 上一版草稿(在此基础上修订,不要推倒重写)\n` +
         JSON.stringify({ summary: s.summary, segments: s.segments });
     }
-    const r = await callSegments({
-      prompt,
-      system: STREAM_SYSTEM_PROMPT,
-      model: s.model,
-      apiKey: s.apiKey,
-    });
+    // FIRST pass + a live SSE sink available → stream it (same UX as a
+    // normal quick rewrite: compare cards appear as the model emits them).
+    // Subsequent refine passes stay non-streamed; the route flushes the
+    // improved version as a single `revise` frame when the loop settles.
+    const sink =
+      typeof requestContext?.get === 'function'
+        ? requestContext.get('stream')
+        : null;
+    const r =
+      s.attempt === 0 && typeof sink === 'function'
+        ? await callSegmentsStream(
+            {
+              prompt,
+              system: STREAM_SYSTEM_PROMPT,
+              model: s.model,
+              apiKey: s.apiKey,
+              signal: abortSignal,
+            },
+            sink
+          )
+        : await callSegments({
+            prompt,
+            system: STREAM_SYSTEM_PROMPT,
+            model: s.model,
+            apiKey: s.apiKey,
+          });
     return {
       ...s,
       attempt: s.attempt + 1,
@@ -402,11 +422,11 @@ export const refinePipeline = createWorkflow({
 
 /**
  * Run just the refine loop. `onIter({attempt, score})` fires after each
- * evaluate step (best-effort, via run.watch — never fatal if the watch
- * shape changes across Mastra versions).
+ * evaluate step (best-effort, via run.watch). `opts.sink(frame)` is handed
+ * to the rewrite step (via requestContext) so the FIRST pass streams live.
  * @returns {Promise<{summary,segments,score,iterations,role,model,apiKey}>}
  */
-export async function runRefine(input, onIter) {
+export async function runRefine(input, onIter, opts = {}) {
   const run = await refinePipeline.createRun();
   if (typeof onIter === 'function') {
     try {
@@ -430,7 +450,13 @@ export async function runRefine(input, onIter) {
       /* watch unsupported — degrade silently to no progress ticks */
     }
   }
-  const res = await run.start({ inputData: input });
+  const requestContext =
+    typeof opts.sink === 'function'
+      ? new Map([['stream', opts.sink]])
+      : undefined;
+  const res = await run.start(
+    requestContext ? { inputData: input, requestContext } : { inputData: input }
+  );
   if (res.status !== 'success') {
     const msg =
       res.error?.message ||

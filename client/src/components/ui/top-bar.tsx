@@ -21,6 +21,7 @@ interface TopBarProps {
   onHome: () => void;
   onHistory: () => void;
   onEditor: () => void;
+  onShowcase: () => void;
   onSettings: () => void;
   onLogout: () => void;
 }
@@ -35,6 +36,7 @@ export function TopBar({
   onHome,
   onHistory,
   onEditor,
+  onShowcase,
   onSettings,
   onLogout,
 }: TopBarProps) {
@@ -125,6 +127,12 @@ export function TopBar({
             )}
           >
             [ 编辑器 ]
+          </button>
+          <button
+            onClick={onShowcase}
+            className="font-mono text-[11px] uppercase tracking-[1.5px] text-text-dim transition-colors hover:text-text"
+          >
+            [ 展示墙 ]
           </button>
           <button
             onClick={onSettings}

@@ -1,8 +1,8 @@
 // Model adapter for Mastra steps. Reuses the existing DeepSeek / OpenRouter
 // callers + fault-tolerant parser so orchestration inherits the SAME provider
 // routing, error contract, and quota-neutral failure behavior as /api/rewrite.
-import { callDeepSeek } from '../deepseek.js';
-import { callOpenRouter, resolveModel } from '../openrouter.js';
+import { callDeepSeek, streamDeepSeek } from '../deepseek.js';
+import { callOpenRouter, streamOpenRouter, resolveModel } from '../openrouter.js';
 import { parseAIResponse } from '../parser.js';
 import { makeJsonExtractor } from '../ndjson.js';
 
@@ -59,6 +59,55 @@ export async function callSegments({ prompt, system, model, apiKey }) {
         rewritten: obj.rewritten ?? '',
         note: obj.note ?? '',
       });
+    }
+  }
+  return { summary, segments };
+}
+
+/**
+ * Like callSegments, but **streams** the model (DeepSeek direct / OpenRouter)
+ * and invokes `onFrame({t:'meta'|'seg',...})` as each NDJSON frame lands —
+ * identical wire shape to POST /api/rewrite/stream. Still returns the fully
+ * assembled {summary, segments} for the orchestration loop. Used for the
+ * FIRST refine pass so deep 编排 shows the compare cards as fast as a normal
+ * quick rewrite.
+ *
+ * @returns {Promise<{summary:string, segments:Array}>}
+ */
+export async function callSegmentsStream(
+  { prompt, system, model, apiKey, signal },
+  onFrame
+) {
+  const opts = { system, signal };
+  const gen =
+    model === 'deepseek'
+      ? streamDeepSeek(prompt, opts)
+      : streamOpenRouter(prompt, {
+          ...opts,
+          apiKey,
+          model: resolveModel(model) ?? undefined,
+        });
+  const extract = makeJsonExtractor();
+  let summary = '';
+  const segments = [];
+  for await (const delta of gen) {
+    for (const obj of extract(delta)) {
+      if (obj?.t === 'meta') {
+        summary = typeof obj.summary === 'string' ? obj.summary : summary;
+        onFrame?.({ t: 'meta', summary });
+      } else if (obj?.t === 'seg') {
+        const seg = {
+          kind: obj.kind ?? 'experience',
+          title: obj.title ?? '',
+          original: obj.original ?? '',
+          rewritten: obj.rewritten ?? '',
+          note: obj.note ?? '',
+        };
+        segments.push(seg);
+        onFrame?.({ t: 'seg', ...seg });
+      } else if (obj?.t === 'done') {
+        break;
+      }
     }
   }
   return { summary, segments };

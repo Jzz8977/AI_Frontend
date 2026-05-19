@@ -129,6 +129,86 @@
     }
   }
 
+  /* 首屏炫酷动画用 */
+  @keyframes gridDrift {
+    from {
+      background-position: 0 0;
+    }
+    to {
+      background-position: 44px 44px;
+    }
+  }
+  @keyframes floaty {
+    0%,
+    100% {
+      transform: translateY(0);
+      opacity: 0.55;
+    }
+    50% {
+      transform: translateY(-18px);
+      opacity: 1;
+    }
+  }
+  @keyframes auroraShift {
+    0% {
+      transform: translate3d(-8%, -4%, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(8%, 6%, 0) scale(1.25);
+    }
+    100% {
+      transform: translate3d(-8%, -4%, 0) scale(1);
+    }
+  }
+  @keyframes scanline {
+    from {
+      transform: translateY(-100%);
+    }
+    to {
+      transform: translateY(2200%);
+    }
+  }
+  @keyframes riseIn {
+    from {
+      opacity: 0;
+      transform: translateY(22px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .anim-grid {
+    background-image: linear-gradient(
+        var(--border) 1px,
+        transparent 1px
+      ),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 44px 44px;
+    animation: gridDrift 3.6s linear infinite;
+  }
+  .anim-aurora {
+    animation: auroraShift 14s ease-in-out infinite;
+  }
+  .anim-floaty {
+    animation: floaty 6s ease-in-out infinite;
+  }
+  .anim-scanline {
+    animation: scanline 7s linear infinite;
+  }
+  .anim-riseIn {
+    animation: riseIn 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .anim-grid,
+    .anim-aurora,
+    .anim-floaty,
+    .anim-scanline,
+    .anim-riseIn {
+      animation: none;
+    }
+  }
+
   .anim-pulse {
     animation: pulse 1.6s ease-in-out infinite;
   }

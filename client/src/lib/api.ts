@@ -12,6 +12,8 @@ import type {
   ProjectSummary,
   RewriteResponse,
   RoleId,
+  ShowcaseDetail,
+  ShowcaseItem,
   Usage,
 } from "./types";
 
@@ -172,6 +174,13 @@ export interface OrchestrateStreamHandlers {
   }) => void;
   onMeta: (summary: string) => void;
   onSegment: (seg: AutoSegment) => void;
+  /** 精修循环把首版改写打磨得更好后,一次性下发改进版(整体替换)。 */
+  onRevise: (info: {
+    summary: string;
+    segments: AutoSegment[];
+    score?: number;
+    attempt?: number;
+  }) => void;
   /** 所有分段已下发完毕(知识点/学习路线 仍在后台跑)。 */
   onSegDone: () => void;
   /** #2 知识点跑完一次性下发(可能为空数组)。 */
@@ -286,6 +295,19 @@ export function streamOrchestrate(
               original: (evt.original as string) ?? "",
               rewritten: (evt.rewritten as string) ?? "",
               note: (evt.note as string) ?? "",
+            });
+          else if (evt.t === "revise")
+            h.onRevise({
+              summary: (evt.summary as string) ?? "",
+              segments: ((evt.segments as AutoSegment[]) ?? []).map((sg) => ({
+                kind: sg.kind ?? "experience",
+                title: sg.title ?? "",
+                original: sg.original ?? "",
+                rewritten: sg.rewritten ?? "",
+                note: sg.note ?? "",
+              })),
+              score: evt.score as number | undefined,
+              attempt: evt.attempt as number | undefined,
             });
           else if (evt.t === "segdone") h.onSegDone();
           else if (evt.t === "knowledge")
@@ -463,4 +485,30 @@ export function renameProject(id: number, title: string) {
 }
 export function deleteProject(id: number) {
   return api<{ ok: true }>(`/api/projects/${id}`, { method: "DELETE" });
+}
+
+// ---- 分享 / 公开展示墙 ----
+export function setRunShared(
+  projectId: number,
+  runId: number,
+  shared: boolean
+) {
+  return api<{ ok: true; shared: boolean }>(
+    `/api/projects/${projectId}/runs/${runId}/share`,
+    { method: "PATCH", body: { shared } }
+  );
+}
+
+/** 公开展示墙列表 — 免登录。 */
+export function publicShowcase() {
+  return api<{ items: ShowcaseItem[] }>("/api/public/showcase", {
+    auth: false,
+  });
+}
+
+/** 公开展示墙某条详情(仅改写结果,无原文/作者身份)— 免登录。 */
+export function publicShowcaseItem(id: number) {
+  return api<{ item: ShowcaseDetail }>(`/api/public/showcase/${id}`, {
+    auth: false,
+  });
 }

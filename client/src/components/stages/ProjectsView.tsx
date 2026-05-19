@@ -8,6 +8,7 @@ import {
   getProject,
   listProjects,
   renameProject,
+  setRunShared,
 } from "@/lib/api";
 import type { ProjectDetail, ProjectSummary, Run } from "@/lib/types";
 
@@ -42,6 +43,42 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
   const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [shareBusy, setShareBusy] = useState<number | null>(null);
+
+  const onToggleShare = useCallback(
+    async (projectId: number, run: Run) => {
+      const next = !run.shared;
+      if (
+        next &&
+        !window.confirm(
+          "将该版本的【改写结果】公开到展示墙?\n" +
+            "• 仅公开改写后的内容,不含原始简历、联系方式与你的身份\n" +
+            "• 任何人(无需登录)都能看到\n• 可随时取消分享"
+        )
+      )
+        return;
+      setShareBusy(run.id);
+      try {
+        await setRunShared(projectId, run.id, next);
+        setDetail((d) =>
+          d
+            ? {
+                ...d,
+                runs: d.runs.map((x) =>
+                  x.id === run.id ? { ...x, shared: next } : x
+                ),
+              }
+            : d
+        );
+        toast.success(next ? "已公开到展示墙" : "已取消分享");
+      } catch {
+        toast.error("操作失败,请重试");
+      } finally {
+        setShareBusy(null);
+      }
+    },
+    []
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -152,12 +189,14 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
 
         <div className="space-y-px">
           {runs.map((r) => (
-            <button
+            <div
               key={r.id}
-              onClick={() => onOpenRun(r, project)}
-              className="flex w-full items-center justify-between gap-4 border border-border bg-panel px-6 py-5 text-left transition-colors hover:border-border-hi"
+              className="flex items-center justify-between gap-4 border border-border bg-panel px-6 py-5 transition-colors hover:border-border-hi"
             >
-              <div className="flex items-center gap-4">
+              <button
+                onClick={() => onOpenRun(r, project)}
+                className="flex flex-1 items-center gap-4 text-left"
+              >
                 <span className="font-mono text-[13px] text-green">
                   v{r.version}
                 </span>
@@ -166,11 +205,31 @@ export function ProjectsView({ onOpenRun, onContinue }: ProjectsViewProps) {
                 </Tag>
                 <Tag color="blue">{cn2(ROLE_CN, r.role)}</Tag>
                 {r.model && <Tag color="dim">{r.model}</Tag>}
+                {r.shared && <Tag color="green">已公开</Tag>}
+              </button>
+              <div className="flex shrink-0 items-center gap-3">
+                <span className="hidden font-mono text-[11px] text-text-muted sm:inline">
+                  {fmt(r.createdAt)}
+                </span>
+                <Button
+                  variant={r.shared ? "outline" : "ghost"}
+                  size="sm"
+                  disabled={shareBusy === r.id}
+                  onClick={() => onToggleShare(project.id, r)}
+                  title={
+                    r.shared
+                      ? "从展示墙取消分享"
+                      : "把该版本的改写结果公开到展示墙"
+                  }
+                >
+                  {shareBusy === r.id
+                    ? "…"
+                    : r.shared
+                      ? "取消分享"
+                      : "分享"}
+                </Button>
               </div>
-              <span className="font-mono text-[11px] text-text-muted">
-                {fmt(r.createdAt)}
-              </span>
-            </button>
+            </div>
           ))}
         </div>
       </div>

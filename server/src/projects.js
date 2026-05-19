@@ -5,8 +5,10 @@ import { requireAuth } from './auth.js';
 import {
   listProjectsForUser,
   getProjectWithRuns,
+  getOwnedProject,
   renameProject,
   deleteProject,
+  setRunShared,
 } from './db.js';
 
 const router = express.Router();
@@ -29,6 +31,7 @@ function publicRun(row, idx) {
     model: row.model,
     original: row.original,
     result,
+    shared: Boolean(row.shared),
     createdAt: row.created_at,
   };
 }
@@ -98,6 +101,30 @@ router.delete('/:id', requireAuth, (req, res) => {
     return res.status(404).json({ error: 'Project not found' });
   }
   res.json({ ok: true });
+});
+
+// ---- PATCH /api/projects/:id/runs/:runId/share — toggle public share ----
+// Opt-in only. Sharing publishes ONLY the rewritten result to the public
+// showcase (never the raw original / owner identity — enforced in public.js).
+router.patch('/:id/runs/:runId/share', requireAuth, (req, res) => {
+  const id = Number.parseInt(req.params.id, 10);
+  const runId = Number.parseInt(req.params.runId, 10);
+  if (!Number.isInteger(id) || !Number.isInteger(runId)) {
+    return res.status(400).json({ error: 'Invalid project/run id' });
+  }
+  const { shared } = req.body ?? {};
+  if (typeof shared !== 'boolean') {
+    return res.status(400).json({ error: 'shared must be a boolean' });
+  }
+  // Ownership: project must belong to the caller…
+  if (!getOwnedProject(req.user.id, id)) {
+    return res.status(404).json({ error: 'Project not found' });
+  }
+  // …and the run must belong to the caller (setRunShared is user-scoped).
+  if (!setRunShared(req.user.id, runId, shared)) {
+    return res.status(404).json({ error: 'Run not found' });
+  }
+  res.json({ ok: true, shared });
 });
 
 export default router;

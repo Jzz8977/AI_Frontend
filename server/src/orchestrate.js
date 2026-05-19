@@ -132,6 +132,14 @@ router.post('/', requireAuth, async (req, res) => {
           targetScore: target,
           ceiling: ITER_CEILING,
         });
+      },
+      {
+        // The FIRST refine pass streams live (meta/seg frames), so the
+        // compare cards show as fast as a normal quick rewrite. Later
+        // refine passes are flushed as one `revise` frame below.
+        sink: (frame) => {
+          if (!clientGone && !res.writableEnded) sse(res, frame);
+        },
       }
     );
   } catch (err) {
@@ -154,10 +162,21 @@ router.post('/', requireAuth, async (req, res) => {
 
   const { summary, segments, score, iterations } = refined;
 
-  // Flush the rewrite the moment it's ready — 分段对比/整理成稿/简历模板 usable now.
-  sse(res, { t: 'meta', summary });
-  for (const seg of segments) sse(res, { t: 'seg', ...seg });
-  // Segments are complete here; 知识点/学习路线 still pending below.
+  // The first pass was already streamed live (meta/seg) via the sink. If the
+  // loop refined further (>1 evaluation = at least one extra rewrite), flush
+  // the improved final version as one `revise` frame so the client swaps the
+  // displayed draft for the polished one. If it passed on the first try the
+  // streamed draft already IS final — no revise needed.
+  if (iterations.length > 1) {
+    sse(res, {
+      t: 'revise',
+      summary,
+      segments,
+      score,
+      attempt: iterations.length,
+    });
+  }
+  // Segments settled here; 知识点/学习路线 still pending below.
   sse(res, { t: 'segdone' });
 
   // ---- Phase 2: #2 知识点(uses the user's chosen model, same as before) ----

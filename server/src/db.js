@@ -59,6 +59,14 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id, id);
 `);
 
+// ---- Idempotent migrations (older DBs created before a column existed) ------
+// 分享:runs.shared (0/1) — 用户显式把某个版本发布到公开「展示墙」。
+const runCols = db.prepare(`PRAGMA table_info(runs)`).all();
+if (!runCols.some((c) => c.name === 'shared')) {
+  db.exec(`ALTER TABLE runs ADD COLUMN shared INTEGER NOT NULL DEFAULT 0`);
+}
+db.exec(`CREATE INDEX IF NOT EXISTS idx_runs_shared ON runs(shared, id)`);
+
 // ---- Prepared statements ----------------------------------------------------
 
 const stmts = {
@@ -122,6 +130,23 @@ const stmts = {
   runsByProject: db.prepare(
     `SELECT * FROM runs WHERE project_id = ? ORDER BY id ASC`
   ),
+
+  // ---- Sharing / public showcase ----
+  setRunShared: db.prepare(
+    `UPDATE runs SET shared = ? WHERE id = ? AND user_id = ?`
+  ),
+  sharedList: db.prepare(`
+    SELECT r.id, r.role, r.mode, r.created_at, r.result_json, p.title
+    FROM runs r JOIN projects p ON p.id = r.project_id
+    WHERE r.shared = 1
+    ORDER BY r.id DESC
+    LIMIT 60
+  `),
+  sharedOne: db.prepare(`
+    SELECT r.id, r.role, r.mode, r.created_at, r.result_json, p.title
+    FROM runs r JOIN projects p ON p.id = r.project_id
+    WHERE r.id = ? AND r.shared = 1
+  `),
 };
 
 // ---- Helper functions -------------------------------------------------------
@@ -215,6 +240,23 @@ export const addRun = db.transaction(
     return { run, version };
   }
 );
+
+// ---- Sharing / public showcase ---------------------------------------------
+
+/** Toggle a run's public-share flag. Returns true if owned & updated. */
+export function setRunShared(userId, runId, shared) {
+  return stmts.setRunShared.run(shared ? 1 : 0, runId, userId).changes > 0;
+}
+
+/** All publicly-shared runs (newest first, capped), with project title. */
+export function listSharedRuns() {
+  return stmts.sharedList.all();
+}
+
+/** One shared run by id (only if still shared), with project title. */
+export function getSharedRun(runId) {
+  return stmts.sharedOne.get(runId);
+}
 
 export { db };
 export default db;
