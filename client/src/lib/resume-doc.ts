@@ -150,6 +150,18 @@ function splitBullets(text: string): string[] {
   return lines.length ? lines : [""];
 }
 
+/** 公司名缺失/占位时的回落值(提示用户手动替换,绝不让 AI 编公司名)。 */
+const COMPANY_PLACEHOLDER = "XX公司";
+// 命中这些就当作"用户/AI 没真给公司名"——统一替换为占位符。
+const COMPANY_PLACEHOLDER_RE = /^(xx+公?司?|某公司|公司[a-z0-9]?|待补充|未填|n\/?a|tbd|todo|占位)$/i;
+
+function normalizeCompany(raw: string): string {
+  const v = raw.trim();
+  if (!v) return COMPANY_PLACEHOLDER;
+  if (COMPANY_PLACEHOLDER_RE.test(v)) return COMPANY_PLACEHOLDER;
+  return v;
+}
+
 /** experience 段标题大多是「公司 · 岗位 · 时间」一类,尽力拆开。 */
 function parseExpTitle(title: string): {
   company: string;
@@ -161,7 +173,7 @@ function parseExpTitle(title: string): {
     .map((s) => s.trim())
     .filter(Boolean);
   return {
-    company: parts[0] ?? title.trim(),
+    company: normalizeCompany(parts[0] ?? title),
     role: parts[1] ?? "",
     period: parts[2] ?? "",
   };

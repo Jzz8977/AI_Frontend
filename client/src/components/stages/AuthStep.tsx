@@ -54,7 +54,7 @@ export function AuthStep({ onAuthed }: AuthStepProps) {
         </div>
 
         <h1 className="mb-2 font-sans text-[34px] font-extralight leading-[1.15] tracking-[-1px] text-text">
-          把简历写成
+          程序员把简历写成
           <br />
           <span className="font-medium italic">
             招聘官想看的样子

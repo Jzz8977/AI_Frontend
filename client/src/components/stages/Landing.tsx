@@ -165,10 +165,10 @@ export function Landing({ authed }: LandingProps) {
             <Dot color="green" pulse size={7} /> 2026 简历改写门户
           </p>
           <h1
-            className="anim-riseIn max-w-[16ch] font-sans text-[48px] font-light leading-[1.08] tracking-[-1.5px] md:text-[76px]"
+            className="anim-riseIn max-w-[17ch] font-sans text-[48px] font-light leading-[1.08] tracking-[-1.5px] md:text-[76px]"
             style={{ animationDelay: "0.08s" }}
           >
-            把你的经历,
+            把你的简历,
             <br />
             重写成{" "}
             <span className="text-green">
@@ -182,7 +182,7 @@ export function Landing({ authed }: LandingProps) {
             className="anim-riseIn mt-7 max-w-[52ch] font-sans text-[17px] font-light leading-relaxed text-text-dim"
             style={{ animationDelay: "0.16s" }}
           >
-            AI 按 2026 岗位标准重写简历、逐条诊断、深度编排到达标为止,
+            AI 按 2026 前端后端开发岗位标准重写简历、逐条诊断、深度编排到达标为止,
             还能提炼知识点与学习路线。下面是其他人主动分享的版本 ——
             无需登录即可参考借鉴。
           </p>
